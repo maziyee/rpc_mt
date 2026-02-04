@@ -1,6 +1,6 @@
 {
-    "save_file" : "../logs",
-    "level" : "trace",
-    "is_stdout" : true,
-    "is_fileout" : true
+    "save_file": "../logs",
+    "level": "trace",
+    "is_stdout": true,
+    "is_fileout": true
 }
