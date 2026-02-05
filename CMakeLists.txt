@@ -13,14 +13,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-zookeeper CONFIG REQUIRED)
 
 file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/utils/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/load_config/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/service_registry/*.cpp"
     )
 
 set (SERVER_SOURCES 
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/server/server_main.cpp"
+)
+
+set (TEST_SOURCES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_registry.cpp"
 )
 
 add_executable(server
@@ -28,13 +34,19 @@ add_executable(server
     ${SERVER_SOURCES}
 )
 
-foreach(target server)
+add_executable(test
+    ${COMMON_SOURCES}
+    ${TEST_SOURCES}
+)
+
+foreach(target server test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_link_libraries(${target} PRIVATE
         spdlog::spdlog
         nlohmann_json::nlohmann_json
+        unofficial::zookeeper::zookeeper
     )
 
     target_compile_options(${target} PRIVATE
