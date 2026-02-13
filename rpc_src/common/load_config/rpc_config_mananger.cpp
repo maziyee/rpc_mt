@@ -5,7 +5,8 @@
 
 #include "log_manager.h"
 
-bool rpc::RpcConfigManager::Init(const std::string& log_config_path) {
+bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
+                                 const std::string& service_config_path) {
   try {
     if (!this->spdlog_config_->InitSpdlog(log_config_path)) {
       std::cerr << "InitSpdlog config error" << std::endl;
@@ -17,6 +18,11 @@ bool rpc::RpcConfigManager::Init(const std::string& log_config_path) {
     }
     LOG_INFO("Init spdlog config success with level: {}",
              this->GetSpdlogConfig()->GetLevel());
+
+    if (!this->service_config_->Init(service_config_path)) {
+      LOG_ERROR("Init service config error");
+      return false;
+    }
     return true;
   } catch (const std::exception& e) {
     std::cerr << "Init RpcConfigManager error: " << e.what() << std::endl;

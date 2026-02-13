@@ -19,6 +19,7 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/utils/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/load_config/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/service_registry/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/connect_handler/*.cpp"
     )
 
 set (SERVER_SOURCES 
@@ -26,7 +27,7 @@ set (SERVER_SOURCES
 )
 
 set (TEST_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_registry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_zkhandler.cpp"
 )
 
 add_executable(server
