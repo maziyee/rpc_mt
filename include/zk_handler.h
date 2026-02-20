@@ -55,7 +55,6 @@ class ZkHandler {
 
   void CleanUp();
 
-  ~ZkHandler();
   bool CreateRegistry();
 
   ServiceRegistry* GetServiceRegistry();
@@ -66,6 +65,7 @@ class ZkHandler {
   bool RegistryAllNode(const ServiceConfig* service_config);
 
   std::vector<std::string> GetServers();
+  ~ZkHandler();
 
  private:
   ZkHandler()
@@ -87,5 +87,8 @@ class ZkHandler {
   std::vector<std::string> servers_;
 
   std::unique_ptr<ServiceRegistry> service_registry_;
+
+  const int kDefultZkPort = 2181;
+  const int kMaxRetryTimes = 10;
 };
 }  // namespace rpc

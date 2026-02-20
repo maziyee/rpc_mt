@@ -220,7 +220,7 @@ void rpc::ZkHandler::SetZkport(int port) {
   std::lock_guard<std::mutex> lock(this->mutex_);
   if (port < 0 || port > 65535) {
     LOG_ERROR("Zk port is invalid: {}", port);
-    this->zk_port_ = 2181;
+    this->zk_port_ = kDefultZkPort;
   }
   this->zk_port_ = port;
 }
@@ -268,8 +268,7 @@ bool rpc::ZkHandler::EnSureConnect() {
     }
   }
   int retry = 0;
-  const int max_retry = 10;
-  while (retry < max_retry) {
+  while (retry < kMaxRetryTimes) {
     int state = zoo_state(this->zk_client);
     const char* err_msg = nullptr;
     if (state == ZOO_CONNECTED_STATE) {

@@ -6,7 +6,7 @@
 
 int main() {
   if (!rpc::RpcConfigManager::GetInstance().Init(
-          "../config/spdlog_config.json")) {
+          "../config/spdlog_config.json", "../config/service_config.json")) {
     std::cerr << "RpcConfigManager init error" << std::endl;
     return -1;
   };
@@ -22,6 +22,20 @@ int main() {
     if (!service_registry.Register(service_name, service_addr)) {
       std::cerr << "registry failed" << std::endl;
       return -1;
+    }
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+
+      if (!service_registry.IsConnected()) {
+        LOG_ERROR("the connect lost");
+        break;
+      }
+
+      std::string input;
+      std::cin >> input;
+      if (input == "quit") {
+        break;
+      }
     }
   } catch (std::exception& e) {
     std::cerr << "service_registry failed" << e.what() << std::endl;
