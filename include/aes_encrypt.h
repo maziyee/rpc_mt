@@ -13,13 +13,14 @@ class AesEncrypt {
   };
   bool Encrypt(const std::string& data, std::string& ciphertext);
   bool Decrypt(const std::string& encrypted_data, std::string& plaintext);
+  void Init(const std::string mas_key) { this->master_key_ = mas_key; }
+
   AesEncrypt(const AesEncrypt&) = delete;
   AesEncrypt& operator=(const AesEncrypt&) = delete;
 
  private:
-  AesEncrypt() { this->master_key_ = "rpc_mt_aes_encrypt_key"; }
   ~AesEncrypt() = default;
-
+  AesEncrypt() = default;
   std::string Base64Encode(const std::string& data);
   std::string Base64Decode(const std::string& data);
   std::string GenerateRandomKey(size_t key_size);

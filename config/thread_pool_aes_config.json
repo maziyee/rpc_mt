@@ -1,0 +1,11 @@
+{
+    "Aes": {
+        "masterkey": "rpc_mt_aes_encrypt_key"
+    },
+    "Thread_pool": {
+        "max_threads": 10,
+        "core_threads": 8,
+        "keep_alive_time": 60,
+        "queue_size": 10000
+    }
+}

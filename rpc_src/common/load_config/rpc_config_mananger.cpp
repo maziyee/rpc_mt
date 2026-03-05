@@ -6,7 +6,8 @@
 #include "log_manager.h"
 
 bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
-                                 const std::string& service_config_path) {
+                                 const std::string& service_config_path,
+                                 const std::string& thread_pool_aes_path) {
   try {
     if (!this->spdlog_config_->InitSpdlog(log_config_path)) {
       std::cerr << "InitSpdlog config error" << std::endl;
@@ -21,6 +22,10 @@ bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
 
     if (!this->service_config_->Init(service_config_path)) {
       LOG_ERROR("Init service config error");
+      return false;
+    }
+    if (!this->thread_aes_config_->InitThreadAes(thread_pool_aes_path)) {
+      LOG_ERROR("Init threadpool and aes module failed");
       return false;
     }
     return true;

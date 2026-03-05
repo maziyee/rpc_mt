@@ -16,6 +16,7 @@ namespace meeting_ctrl {
 enum class TaskPriority { kHIGH, kNORMAL, kLOW };
 enum class ThreadStatus { kRunning, KPuase, kShuttingDown, kStopped };
 struct ThreadStruct {
+  ThreadStruct() = default;
   ThreadStruct(size_t core_threads, size_t max_threads, size_t keep_alive_time,
                size_t queue_size = 0)
       : core_threads(core_threads),
@@ -25,7 +26,7 @@ struct ThreadStruct {
   };
   size_t core_threads = std::thread::hardware_concurrency();
   size_t max_threads = std::thread::hardware_concurrency() * 2;
-  std::chrono::seconds keep_alive_time{2};
+  std::chrono::seconds keep_alive_time{60};
   size_t queue_size = 1000;
 };
 
@@ -82,7 +83,7 @@ class ThreadPool {
 
   void Resume();
 
-  const ThreadStatus& GetState() const { return this->state_; }
+  const ThreadStatus& GetState() const { return this->state_.load(); }
 
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;
