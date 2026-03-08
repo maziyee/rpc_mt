@@ -15,6 +15,7 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-zookeeper CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
+find_package(Protobuf CONFIG REQUIRED)
 
 file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/utils/*.cpp"
@@ -24,6 +25,8 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/thread_pool/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/zstd_compress/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/aes_encrypt/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protobuf/*.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/rpc_protobuf/*.cpp"
     )
 
 set (SERVER_SOURCES 
@@ -31,7 +34,7 @@ set (SERVER_SOURCES
 )
 
 set (TEST_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_aes.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_protobuf.cpp"
 )
 
 add_executable(server
@@ -47,8 +50,11 @@ add_executable(test
 foreach(target server test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/protobuf
+    ${Protobuf_INCLUDE_DIRS}
     )
     target_link_libraries(${target} PRIVATE
+        protobuf::libprotobuf
         spdlog::spdlog
         nlohmann_json::nlohmann_json
         unofficial::zookeeper::zookeeper
