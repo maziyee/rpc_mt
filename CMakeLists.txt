@@ -27,6 +27,7 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/aes_encrypt/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/protobuf/*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/rpc_protobuf/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/network/*.cpp"
     )
 
 set (SERVER_SOURCES 
@@ -34,7 +35,7 @@ set (SERVER_SOURCES
 )
 
 set (TEST_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_protobuf.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_service.cpp"
 )
 
 add_executable(server

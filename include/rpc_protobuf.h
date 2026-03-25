@@ -47,6 +47,10 @@ class RpcRequest : public RpcBase {
   bool Serializer(std::string& out) override;
   bool Deserializer(const std::string& in) override;
 
+  bool IsValid() const {
+    return !service_name_.empty() && !method_name_.empty();
+  }
+
  private:
   std::string service_name_;
   std::string method_name_;
@@ -65,7 +69,6 @@ class RpcResponse : public RpcBase {
   void SetResultData(const std::string& result_data) {
     result_data_ = result_data;
   }
-
   bool Serializer(std::string& out) override;
   bool Deserializer(const std::string& in) override;
 
