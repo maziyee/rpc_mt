@@ -8,13 +8,21 @@
 #include <unistd.h>
 
 #include "log_manager.h"
-
+namespace rpc {
 Socket::Socket(const std::string& ip, const int port,
                const int max_connection_count, const double socket_timeout)
     : ip_(ip),
       socket_port_(port),
       max_connection_count_(max_connection_count),
-      socket_timeout_(socket_timeout) {}
+      socket_timeout_(socket_timeout) {
+  this->Init();
+}
+
+Socket::~Socket() {
+  if (this->fd_ > 0) {
+    this->Close();
+  }
+}
 
 bool Socket::SetSocketOption() {
   struct timeval send_timeout;
@@ -108,9 +116,9 @@ int Socket::Accept() {
 
 void Socket::Init() {
   this->Create();
+  this->SetSocketOption();
   this->Bind();
   this->Listen();
-  this->SetSocketOption();
 }
 
 void Socket::Create() {
@@ -164,3 +172,4 @@ void Socket::SetNotBlocking(int fd) {
     throw std::runtime_error("Socket fd set nonblocking failed");
   }
 }
+}  // namespace rpc

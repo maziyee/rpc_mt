@@ -79,6 +79,7 @@ class Logger {
       }
       logger_->set_level(spdlog::level::from_str(config->GetLevel()));
       logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] %v");
+      logger_->flush_on(spdlog::level::trace);
       spdlog::set_default_logger(logger_);
       return true;
     } catch (const std::exception& e) {

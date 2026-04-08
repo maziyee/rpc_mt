@@ -1,5 +1,7 @@
 #include "zk_handler.h"
 
+#include "zk_config.h"
+
 void rpc::ZkHandler::UpdateServers() {
   auto new_servers = this->GetServers();
   {
@@ -154,6 +156,7 @@ std::vector<std::string> rpc::ZkHandler::GetServers() {
     std::vector<std::string> servers;
     for (int i = 0; i < nodes.count; i++) {
       std::string node_path = zk_namespace_ + "/" + nodes.data[i];
+      LOG_INFO("zoo_get_children node: {}", node_path);
       char data[1024];
       int data_len = sizeof(data);
       rc = zoo_get(this->zk_client, node_path.c_str(), 0, data, &data_len,
@@ -162,7 +165,7 @@ std::vector<std::string> rpc::ZkHandler::GetServers() {
         std::string server(data, data_len);
         servers.push_back(server);
       } else {
-        LOG_WARN("zoo_get failed: {}", rc);
+        LOG_WARN("zoo_get failed: rc={}, data_len={}, path={}", rc, data_len, node_path);
       }
     }
     deallocate_String_vector(&nodes);
@@ -173,23 +176,23 @@ std::vector<std::string> rpc::ZkHandler::GetServers() {
   }
 }
 
-bool rpc::ZkHandler::InitZkHandler(nlohmann::json& zk_config) {
+bool rpc::ZkHandler::InitZkHandler(ZkConfig* zk_config) {
   try {
-    if (zk_config.empty()) {
+    if (zk_config->Empty()) {
       LOG_ERROR("zk_config is empty");
       return false;
     }
     try {
-      std::string zk_host = zk_config.value("zk_host", "localhost");
+      std::string zk_host = zk_config->GetHost();
       SetZkHost(zk_host);
 
-      int zk_port = zk_config.value("zk_port", 2181);
+      int zk_port = zk_config->GetPort();
       SetZkport(zk_port);
 
-      std::string zk_namespace = zk_config.value("zk_namespace", "mt_rpc");
+      std::string zk_namespace = zk_config->GetNamespace();
       SetZkNamespace(zk_namespace);
 
-      int retry_interval = zk_config.value("retry_interval", 1);
+      int retry_interval = zk_config->GetRetryInterval();
       SetRetryInterval(retry_interval);
     } catch (const std::exception& e) {
       LOG_ERROR("InitZkHandler failed: {}", e.what());
@@ -236,7 +239,11 @@ void rpc::ZkHandler::SetZkHost(const std::string& host) {
 }
 
 void rpc::ZkHandler::SetZkNamespace(const std::string& zk_namespace) {
-  this->zk_namespace_ = zk_namespace;
+  if (!zk_namespace.empty() && zk_namespace[0] != '/') {
+    this->zk_namespace_ = "/" + zk_namespace;
+  } else {
+    this->zk_namespace_ = zk_namespace;
+  }
 }
 
 void rpc::ZkHandler::SetRetryInterval(const int seconds) {

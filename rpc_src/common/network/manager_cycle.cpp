@@ -39,11 +39,11 @@ void rpc::ManagerCycle::Stop() {
   for (auto& it : listen_fds_) {
     it.second->Close();
   }
-  this->connect_manage_->ClossAll();
+  this->connect_manage_->CloseAll();
 }
 
 void rpc::ManagerCycle::HandleEvent(int fd, uint32_t events) {
-  if (events & EPOLLHUP | EPOLLERR) {
+  if (events & (EPOLLHUP | EPOLLERR)) {
     LOG_ERROR("HandleEvent error: {}", fd);
     this->Remove(fd);
     return;
@@ -53,8 +53,10 @@ void rpc::ManagerCycle::HandleEvent(int fd, uint32_t events) {
     Socket* socket = listen_fds_[fd];
     this->HandleNewConnection(socket);
   } else {
-    LOG_INFO("HandleEvent other fd: {}", fd);
-    this->HandleData(fd);
+    if (events & EPOLLIN) {
+      LOG_INFO("HandleEvent read fd: {}", fd);
+      this->HandleData(fd);
+    }
   }
 }
 
@@ -74,7 +76,7 @@ void rpc::ManagerCycle::HandleNewConnection(Socket* socket) {
     this->HandleClose(conn);
   });
   this->connect_manage_->AddConnect(connect);
-  this->AddListenFd(fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP);
+  Add(fd, EPOLLIN | EPOLLOUT | EPOLLRDHUP);
 }
 
 void rpc::ManagerCycle::HandleData(int fd) {
@@ -84,6 +86,7 @@ void rpc::ManagerCycle::HandleData(int fd) {
     this->RemoveConnect(fd);
     return;
   }
+
   if (!conn->IsRunning()) {
     LOG_ERROR("HandleData error: {}", fd);
     this->RemoveConnect(fd);
@@ -95,7 +98,8 @@ void rpc::ManagerCycle::HandleData(int fd) {
     this->RemoveConnect(fd);
     return;
   }
-
+  LOG_INFO("HandleData read success: {} , recv_buf_size: {} ", fd,
+           conn->GetReadBuf().size());
   if (!conn->ProgressGetMessage()) {
     LOG_ERROR("HandleData ProgressGetMessage error: {}", fd);
     this->RemoveConnect(fd);
@@ -104,13 +108,17 @@ void rpc::ManagerCycle::HandleData(int fd) {
 }
 
 void rpc::ManagerCycle::RemoveConnect(int fd) {
-  this->connect_manage_->RemoveConnect(fd);
-  this->Remove(fd);
+  this->Remove(fd);  // 先从 epoll 移除（fd 此时仍有效）
+  this->connect_manage_->RemoveConnect(fd);  // 再释放连接（引用计数归零时析构关 fd）
 }
 
 void rpc::ManagerCycle::HandleMessage(const std::shared_ptr<Connect>& connect,
                                       const rpc::RpcRequest& request) {
   this->HandleMessageAsync(connect, request);
+}
+
+void rpc::ManagerCycle::HandleClose(const std::shared_ptr<Connect>& connect) {
+  this->connect_manage_->RemoveConnect(connect->GetFd());
 }
 
 void rpc::ManagerCycle::Create() {
@@ -128,7 +136,7 @@ void rpc::ManagerCycle::Create() {
   }
 }
 
-bool rpc::ManagerCycle::AddListenFd(int fd, uint32_t events) {
+bool rpc::ManagerCycle::AddListenFd(int fd, uint32_t events, Socket* socket) {
   struct epoll_event event;
   event.events = events | EPOLLET;
   event.data.fd = fd;
@@ -138,7 +146,20 @@ bool rpc::ManagerCycle::AddListenFd(int fd, uint32_t events) {
     return false;
   }
   LOG_INFO("epoll_ctl_add success: {}", fd);
+  this->listen_fds_[fd] = socket;
   return true;
+}
+
+void rpc::ManagerCycle::Add(int fd, uint32_t events) {
+  struct epoll_event event;
+  event.events = events | EPOLLET;
+  event.data.fd = fd;
+  int ret = epoll_ctl(this->epoll_fd_, EPOLL_CTL_ADD, fd, &event);
+  if (ret == -1) {
+    LOG_ERROR("epoll_ctl_add failed: {}", strerror(errno));
+    return;
+  }
+  LOG_INFO("epoll_ctl_add success: {}", fd);
 }
 
 void rpc::ManagerCycle::Modify(int fd, uint32_t events) {
@@ -181,6 +202,7 @@ void rpc::ManagerCycle::HandleMessageAsync(
     LOG_ERROR("HandleMessageAsync error: {}", connect->GetFd());
     return;
   }
+  LOG_INFO("HandleMessageAsync start");
   auto future = meeting_ctrl::ThreadSingle::GetInstance().Enqueue(
       meeting_ctrl::TaskPriority::kHIGH, [this, connect, request]() {
         this->HandleMessageSync(connect, request);

@@ -4,7 +4,7 @@
 #include <iostream>
 #include <thread>
 
-const std::string ServiceRegistry::ROOT_PATH = "/mt_rpc";
+const std::string ServiceRegistry::ROOT_PATH = "/rpc_mt";
 
 ServiceRegistry::ServiceRegistry(const std::string& zk_hosts) {
   zoo_set_debug_level(ZOO_LOG_LEVEL_WARN);

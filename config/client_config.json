@@ -1,0 +1,7 @@
+{
+    "client_ip": "127.0.0.1",
+    "client_port": 8080,
+    "timeout_ms": 5000,
+    "retry_times": 10,
+    "master_key": "rpc_mt_aes_encrypt_key"
+}

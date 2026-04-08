@@ -1,6 +1,7 @@
 #include "thread_single.h"
 
-std::unique_ptr<meeting_ctrl::ThreadPool> meeting_ctrl::ThreadSingle::thread_instance_;
+std::unique_ptr<meeting_ctrl::ThreadPool>
+    meeting_ctrl::ThreadSingle::thread_instance_;
 std::mutex meeting_ctrl::ThreadSingle::mutex_;
 
 bool meeting_ctrl::ThreadSingle::Init(size_t threads) {
@@ -63,3 +64,5 @@ bool meeting_ctrl::ThreadSingle::ShutDown() { return GetInstance().ShutDown(); }
 meeting_ctrl::ThreadStatus meeting_ctrl::ThreadSingle::GetStatus() {
   return GetInstance().GetState();
 }
+
+bool meeting_ctrl::ThreadSingle::Stop_Now() { return GetInstance().Stop_now(); }

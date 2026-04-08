@@ -1,0 +1,7 @@
+{
+    "servers_name_prefix": "rpc_mt",
+    "servers_ip": "0.0.0.0",
+    "servers_port": 8989,
+    "max_connections": 800000,
+    "timeout": 5000
+}

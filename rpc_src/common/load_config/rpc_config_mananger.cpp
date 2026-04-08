@@ -7,7 +7,9 @@
 
 bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
                                  const std::string& service_config_path,
-                                 const std::string& thread_pool_aes_path) {
+                                 const std::string& thread_pool_aes_path,
+                                 const std::string& service_socket_config_path,
+                                 const std::string& zk_config_path) {
   try {
     if (!this->spdlog_config_->InitSpdlog(log_config_path)) {
       std::cerr << "InitSpdlog config error" << std::endl;
@@ -26,6 +28,14 @@ bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
     }
     if (!this->thread_aes_config_->InitThreadAes(thread_pool_aes_path)) {
       LOG_ERROR("Init threadpool and aes module failed");
+      return false;
+    }
+    if (!this->service_socket_config_->Init(service_socket_config_path)) {
+      LOG_ERROR("Init service socket config error");
+      return false;
+    }
+    if (!this->zk_config_->InitZkConfig(zk_config_path)) {
+      LOG_ERROR("Init zk config error");
       return false;
     }
     return true;

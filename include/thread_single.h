@@ -27,6 +27,7 @@ class ThreadSingle {
   static bool Resume();
   static bool ShutDown();
   static ThreadStatus GetStatus();
+  static bool Stop_Now();
   ThreadSingle(const ThreadSingle&) = delete;
   ThreadSingle& operator=(const ThreadSingle&) = delete;
 

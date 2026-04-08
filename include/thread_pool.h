@@ -83,7 +83,7 @@ class ThreadPool {
 
   void Resume();
 
-  const ThreadStatus& GetState() const { return this->state_.load(); }
+  ThreadStatus GetState() const { return this->state_.load(); }
 
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;

@@ -11,6 +11,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Debug & AddressSanitizer
+# if(NOT CMAKE_BUILD_TYPE)
+#     set(CMAKE_BUILD_TYPE Debug)
+# endif()
+# option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+# if(ENABLE_ASAN)
+#     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+#     add_link_options(-fsanitize=address)
+# endif()
+
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-zookeeper CONFIG REQUIRED)
@@ -38,17 +48,23 @@ set (TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_service.cpp"
 )
 
+set(CLIENT_SOURCES
+"${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/client/client_main.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/client/rpc_client.cpp"
+)
+
 add_executable(server
     ${COMMON_SOURCES}
     ${SERVER_SOURCES}
 )
 
-add_executable(test
+add_executable(client
     ${COMMON_SOURCES}
-    ${TEST_SOURCES}
+    ${CLIENT_SOURCES}
 )
 
-foreach(target server test)
+
+foreach(target server client)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/protobuf

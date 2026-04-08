@@ -4,6 +4,8 @@
 
 #include <string>
 
+namespace rpc {
+
 class Socket {
  public:
   Socket(const std::string& ip, const int port, const int max_connection_count,
@@ -36,9 +38,10 @@ class Socket {
   void SetNotBlocking(int fd);
 
  private:
-  int fd_;
+  int fd_ = -1;
   double socket_timeout_;
   uint16_t socket_port_;
   int max_connection_count_;
   std::string ip_;
 };
+}  // namespace rpc

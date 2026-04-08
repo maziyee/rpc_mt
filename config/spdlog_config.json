@@ -1,5 +1,5 @@
 {
-    "save_file": "../logs",
+    "save_file": "/home/you_dian/rpc/rpc_mt/logs",
     "level": "trace",
     "is_stdout": true,
     "is_fileout": true

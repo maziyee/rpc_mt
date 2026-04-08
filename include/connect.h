@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,7 @@ class Connect : public std::enable_shared_from_this<Connect> {
   ~Connect();
   bool Read();
   bool Write(RpcResponse &response);
+  bool Write(RpcRequest &request);
   void Close();
 
   void SetMessageCallback(Message_Callback cb) {
@@ -32,6 +34,11 @@ class Connect : public std::enable_shared_from_this<Connect> {
   int GetPort() const { return this->port_; };
   bool IsRunning() const { return this->is_running_.load() && this->fd_ > 0; };
   bool ProgressGetMessage();
+  bool ReadWithTimeout(int timeout_ms);
+  std::string GetReadBuf() {
+    auto res = std::string(this->recv_buf_.begin(), this->recv_buf_.end());
+    return res;
+  }
 
  private:
   bool SentBufInfo();
@@ -47,6 +54,7 @@ class Connect : public std::enable_shared_from_this<Connect> {
   std::atomic<bool> is_running_;
   Message_Callback message_callback_;
   Close_Callback close_callback_;
+  std::mutex write_mutex_;
 };
 
 }  // namespace rpc

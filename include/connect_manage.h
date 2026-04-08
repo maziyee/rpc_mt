@@ -20,7 +20,7 @@ class ConnectManage {
   int GetConnectCount() { return m_connects.size(); };
   std::shared_ptr<Connect> GetConnect(int fd);
 
-  void ClossAll();
+  void CloseAll();
 
  private:
   std::mutex mutex_;

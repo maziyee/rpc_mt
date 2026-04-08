@@ -229,6 +229,7 @@ bool RpcResponse::Deserializer(const std::string& in) {
     LOG_ERROR("RpcResponse::Deserializer error: {}", e.what());
     return false;
   }
+  return true;
 }
 
 }  // namespace rpc

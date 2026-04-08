@@ -40,7 +40,7 @@ class ZkHandler {
   ZkHandler(ZkHandler&&) = delete;
   ZkHandler& operator=(ZkHandler&&) = delete;
 
-  bool InitZkHandler(nlohmann::json& zk_config);
+  bool InitZkHandler(ZkConfig* zk_config_);
   void SetZkport(int port);
   void SetZkHost(const std::string& host);
   void SetZkNamespace(const std::string& zk_namespace);

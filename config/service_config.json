@@ -1,18 +1,10 @@
 {
     "version": "1.0",
-    "serivce_name": "you_dian",
+    "service_name": "you_dian",
     "registry_nodes": [
         {
-            "address": "192.168.1.100",
-            "port": 2379
-        },
-        {
-            "address": "192.168.1.101",
-            "port": 2379
-        },
-        {
-            "address": "192.168.1.102",
-            "port": 2379
+            "address": "127.0.0.1",
+            "port": 8989
         }
     ]
 }

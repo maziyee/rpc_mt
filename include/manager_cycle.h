@@ -28,10 +28,12 @@ class ManagerCycle {
   void HandleMessage(const std::shared_ptr<Connect>& connect,
                      const rpc::RpcRequest& request);
   void HandleClose(const std::shared_ptr<Connect>& connect);
+  bool AddListenFd(int fd, uint32_t events, Socket* socket);
 
  private:
   void Create();
-  bool AddListenFd(int fd, uint32_t events);
+
+  void Add(int fd, uint32_t events);
   void Modify(int fd, uint32_t events);
   void Remove(int fd);
   std::vector<struct epoll_event> Wait(int timeout_ms);

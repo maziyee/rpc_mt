@@ -1,0 +1,6 @@
+{
+    "zk_host": "localhost",
+    "zk_port": 2181,
+    "zk_namespace": "/rpc_mt/you_dian",
+    "zk_retry_times": 3
+}

@@ -44,14 +44,26 @@ rpc::Connect::Connect(int fd) : fd_(fd) {
   }
 }
 
+rpc::Connect::~Connect() {
+  this->is_running_.store(false);
+  if (this->fd_ > 0) {
+    ::close(this->fd_);
+    LOG_INFO("Connect::~Connect close fd: {}", this->fd_);
+    this->fd_ = -1;
+  }
+  this->recv_buf_.clear();
+  this->send_buf_.clear();
+}
+
 bool rpc::Connect::Read() {
   std::string recv = this->ReadTheInfo();
-  if (recv.empty()) {
-    LOG_ERROR("the recv is empty");
+  if (!this->IsRunning()) {
     return false;
   }
-  this->recv_buf_.insert(recv_buf_.end(), recv.begin(), recv.end());
-  LOG_INFO("the recv info: {}", recv);
+  if (!recv.empty()) {
+    this->recv_buf_.insert(recv_buf_.end(), recv.begin(), recv.end());
+    LOG_INFO("the recv info size: {}", recv.size());
+  }
   return true;
 }
 
@@ -72,7 +84,31 @@ bool rpc::Connect::Write(RpcResponse& response) {
     LOG_ERROR("SendRes error in Encrypt");
     return false;
   }
-  this->recv_buf_.insert(send_buf_.begin(), encrypt.begin(), encrypt.end());
+  std::lock_guard<std::mutex> lock(write_mutex_);
+  this->send_buf_.insert(send_buf_.end(), encrypt.begin(), encrypt.end());
+  LOG_INFO("sent info to the buf");
+  return this->SentBufInfo();
+}
+
+bool rpc::Connect::Write(RpcRequest& request) {
+  std::string serialized;
+  if (!request.Serializer(serialized)) {
+    LOG_ERROR("SendReq error in Serializer");
+    return false;
+  };
+  std::string compress_data;
+  if (!rpc::ZstdCompress::GetInstance().CompressString(serialized,
+                                                       compress_data)) {
+    LOG_ERROR("SendReq error in CompressString");
+    return false;
+  };
+  std::string encrypt;
+  if (!rpc::AesEncrypt::GetInstance().Encrypt(compress_data, encrypt)) {
+    LOG_ERROR("SendReq error in Encrypt");
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(write_mutex_);
+  this->send_buf_.insert(send_buf_.end(), encrypt.begin(), encrypt.end());
   LOG_INFO("sent info to the buf");
   return this->SentBufInfo();
 }
@@ -82,36 +118,35 @@ void rpc::Connect::Close() {
     return;
   }
   this->is_running_.store(false);
-  if (this->fd_ > 0) {
-    ::close(this->fd_);
-    this->fd_ = -1;
-    LOG_INFO("Connect::Close fd: {}", this->fd_);
-  }
-  this->recv_buf_.clear();
-  this->send_buf_.clear();
   if (this->close_callback_) {
     this->close_callback_(shared_from_this());
+  }
+  // fd 由析构函数关闭，确保 epoll 先完成 DEL 再关 fd
+  this->recv_buf_.clear();
+  {
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    this->send_buf_.clear();
   }
 }
 
 bool rpc::Connect::SentBufInfo() {
   if (this->send_buf_.empty()) {
+    LOG_INFO("the send buf is empty");
     return true;
   }
   int total_send = 0;
-  while (total_send <= this->send_buf_.size()) {
+  while (total_send < static_cast<int>(this->send_buf_.size())) {
     int send_size = ::send(this->fd_, this->send_buf_.data() + total_send,
                            this->send_buf_.size() - total_send, 0);
     if (send_size < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return true;
+        break;
       }
-      LOG_ERROR("send error: %s", strerror(errno));
-      this->Close();
+      LOG_ERROR("send error: {}", strerror(errno));
       return false;
     } else if (send_size == 0) {
-      LOG_WARN("send 0 info , {} ", this->fd_);
-      break;
+      LOG_WARN("send 0 bytes, peer closed, fd: {}", this->fd_);
+      return false;
     }
     total_send += send_size;
   }
@@ -120,50 +155,88 @@ bool rpc::Connect::SentBufInfo() {
 }
 
 bool rpc::Connect::ProgressGetMessage() {
-  RpcHeader header;
-  if (this->recv_buf_.size() < sizeof(header)) {
-    return true;
+  if (this->recv_buf_.size() >= sizeof(RpcHeader)) {
+    LOG_INFO("the recv buf size: {}", this->recv_buf_.size());
+    try {
+      std::string encrypt_string(this->recv_buf_.begin(),
+                                 this->recv_buf_.end());
+      std::string decrypt_string;
+      if (encrypt_string.empty()) {
+        LOG_ERROR("the encrypt_string is empty");
+        return false;
+      }
+      if (!rpc::AesEncrypt::GetInstance().Decrypt(encrypt_string,
+                                                  decrypt_string)) {
+        LOG_ERROR("Decrypt error");
+        return false;
+      }
+      LOG_INFO("the decrypt_string size: {}", decrypt_string.size());
+      std::string decompress_data;
+      if (!rpc::ZstdCompress::GetInstance().DecompressString(decrypt_string,
+                                                             decompress_data)) {
+        LOG_ERROR("DecompressString error");
+        return false;
+      }
+      LOG_INFO("the decompress_data size: {}", decompress_data.size());
+      if (decompress_data.size() < sizeof(RpcHeader)) {
+        LOG_DEBUG("waiting for more data");
+        return true;
+      }
+      RpcHeader header;
+      std::memcpy(&header, decompress_data.data(), sizeof(RpcHeader));
+      if (header.magic_ != RpcHeader::kMagic) {
+        LOG_ERROR("the magic is not match");
+        return false;
+      }
+      uint32_t total_size = header.body_size_ + sizeof(RpcHeader);
+      if (decompress_data.size() < total_size) {
+        LOG_DEBUG("waiting for more data");
+        return true;
+      }
+      LOG_INFO("the total_size: {}", total_size);
+      RpcRequest request;
+      if (!request.Deserializer(decompress_data)) {
+        LOG_ERROR("Deserializer error");
+        return false;
+      }
+      LOG_INFO("the request get success");
+      if (this->message_callback_) {
+        message_callback_(shared_from_this(), request);
+      }
+      this->recv_buf_.clear();
+      LOG_INFO("the request info process success");
+      return true;
+    } catch (std::exception& e) {
+      LOG_ERROR("ProgressGetMessage error: {}", e.what());
+      return false;
+    }
   }
-  memcpy(&header, this->recv_buf_.data(), sizeof(header));
-  if (header.kMagic != RpcHeader::kMagic) {
-    LOG_ERROR("ProgressGetMessage error: magic number is not valid");
-    return false;
-  }
-  if (this->recv_buf_.size() < header.body_size_ + sizeof(header)) {
-    return true;
-  }
-  std::string get_message(this->recv_buf_.begin(),
-                          this->recv_buf_.begin() + header.body_size_);
-  this->recv_buf_.erase(recv_buf_.begin(),
-                        recv_buf_.begin() + header.body_size_ + sizeof(header));
+  return true;
+}
 
-  try {
-    std::string decrypt_data;
-    if (!rpc::AesEncrypt::GetInstance().Decrypt(get_message, decrypt_data)) {
-      LOG_ERROR("ProgressGetMessage error: decrypt data failed");
+bool rpc::Connect::ReadWithTimeout(int timeout_ms) {
+  while (true) {
+    fd_set read_set;
+    struct timeval timeout;
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = (timeout_ms % 1000) * 1000;
+    FD_ZERO(&read_set);
+    FD_SET(this->fd_, &read_set);
+    int ret = ::select(this->fd_ + 1, &read_set, NULL, NULL, &timeout);
+    if (ret < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      LOG_ERROR("select error: {}", strerror(errno));
       return false;
     }
-    std::string decompress_data;
-    if (!rpc::ZstdCompress::GetInstance().DecompressString(decrypt_data,
-                                                           decompress_data)) {
-      LOG_ERROR("ProgressGetMessage error: decompress data failed");
+    if (ret == 0) {
+      LOG_ERROR("select timeout");
       return false;
     }
-    RpcRequest request;
-    if (!request.Deserializer(decompress_data)) {
-      LOG_ERROR("ProgressGetMessage error: deserialize data failed");
-      return false;
+    if (FD_ISSET(this->fd_, &read_set)) {
+      return this->Read();
     }
-    if (this->message_callback_) {
-      this->message_callback_(shared_from_this(), request);
-    }
-    if (this->recv_buf_.size() > sizeof(header)) {
-      return this->ProgressGetMessage();
-    }
-    return true;
-  } catch (std::exception& e) {
-    LOG_ERROR("ProgressGetMessage error: {}", e.what());
-    return false;
   }
 }
 

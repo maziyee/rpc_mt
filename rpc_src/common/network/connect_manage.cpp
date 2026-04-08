@@ -2,7 +2,7 @@
 
 rpc::ConnectManage::~ConnectManage() {
   LOG_INFO("ConnectManage::~ConnectManage");
-  this->ClossAll();
+  this->CloseAll();
 }
 
 bool rpc::ConnectManage::AddConnect(std::shared_ptr<Connect> connect) {
@@ -20,8 +20,9 @@ bool rpc::ConnectManage::AddConnect(std::shared_ptr<Connect> connect) {
     if (this->m_connects.find(fd) != this->m_connects.end()) {
       return false;
     }
+    this->m_connects[fd] = connect;
   }
-  this->m_connects[fd] = connect;
+  LOG_INFO("ConnectManage::AddConnect fd:%d", fd);
   return true;
 }
 
@@ -43,7 +44,7 @@ std::shared_ptr<rpc::Connect> rpc::ConnectManage::GetConnect(int fd) {
   return nullptr;
 }
 
-void rpc::ConnectManage::ClossAll() {
+void rpc::ConnectManage::CloseAll() {
   for (auto& it : this->m_connects) {
     it.second->Close();
   }
