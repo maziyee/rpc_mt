@@ -1,0 +1,14 @@
+# 构建产物
+build/
+cmake-build-*/
+
+# 日志
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# 误放的 workspace 文件（引用外部 rpc-tutorial 路径）
+rpc_src/common/load_config/rpc.code-workspace
