@@ -12,3 +12,8 @@ logs/
 
 # 误放的 workspace 文件（引用外部 rpc-tutorial 路径）
 rpc_src/common/load_config/rpc.code-workspace
+
+# 个人笔记（只在本地保留，不纳入版本管理）
+ARCH_DECOUPLING.md
+PLAN.md
+ZK_NOTES.md
