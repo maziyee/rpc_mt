@@ -18,6 +18,6 @@ bool rpc::ZkConfig::InitZkConfig(const std::string &config_path) {
   this->SetHost(zk_config.value("zk_host", "localhost"));
   this->SetPort(zk_config.value("zk_port", 2181));
   this->SetNamespace(zk_config.value("zk_namespace", "/rpc_mt/you_dian"));
-  this->SetRetryTime(zk_config.value("retry_time", 3));
+  this->SetRetryTime(zk_config.value("zk_retry_times", 3));
   return true;
 }

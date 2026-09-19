@@ -24,6 +24,7 @@ extern "C" {
 #include "log_manager.h"
 #include "rpc_config_mananger.h"
 #include "service_registry.h"
+#include "zk_handle.h"
 
 namespace rpc {
 class RpcConfigManager;
@@ -80,7 +81,7 @@ class ZkHandler {
   std::string zk_host_;
   std::string zk_namespace_;
   int zk_port_;
-  zhandle_t* zk_client;
+  ZkHandle zk_client;
 
   std::mutex mutex_;
   std::mutex server_mutex_;

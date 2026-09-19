@@ -1,44 +1,21 @@
 #include "service_registry.h"
 
-#include <chrono>
-#include <iostream>
-#include <thread>
+namespace rpc {
 
 const std::string ServiceRegistry::ROOT_PATH = "/rpc_mt";
 
-ServiceRegistry::ServiceRegistry(const std::string& zk_hosts) {
-  zoo_set_debug_level(ZOO_LOG_LEVEL_WARN);
-  this->zk_handle_ =
-      zookeeper_init(zk_hosts.c_str(), this->GlobalWatcher, 30000, 0, this, 0);
-  if (zk_handle_ == nullptr) {
-    throw std::runtime_error("zookeeper_init failed");
-  };
-  int retry = 0;
-  while (!this->is_connected_ && retry < 10) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    retry++;
-  }
-  if (!this->is_connected_) {
-    LOG_ERROR("zookeeper_init timeout");
-  } else {
-    LOG_INFO("zookeeper_init success , connect {}", zk_hosts);
+ServiceRegistry::ServiceRegistry(ZkHandle zk_handle)
+    : zk_handle_(std::move(zk_handle)) {
+  if (this->zk_handle_ == nullptr) {
+    throw std::runtime_error("ServiceRegistry: null zk handle");
   }
 }
 
-ServiceRegistry::~ServiceRegistry() {
-  if (this->zk_handle_ != nullptr) {
-    try {
-      zookeeper_close(this->zk_handle_);
-      LOG_INFO("zookeeper_close success");
-      this->zk_handle_ = nullptr;
-    } catch (std::exception& e) {
-      LOG_ERROR("zookeeper_close failed: {}", e.what());
-      this->zk_handle_ = nullptr;
-    } catch (...) {
-      LOG_ERROR("zookeeper_close unknown failed");
-      this->zk_handle_ = nullptr;
-    }
-  }
+// 不再维护自己的一份连接状态 —— 那个 is_connected_ 标志既依赖 watcher 回调
+// 时机，又是跨线程读写的裸 bool。直接同步查 zoo_state()，语义等价且更准。
+bool ServiceRegistry::IsConnected() const {
+  return this->zk_handle_ != nullptr &&
+         zoo_state(this->zk_handle_.get()) == ZOO_CONNECTED_STATE;
 }
 
 bool ServiceRegistry::Register(const std::string& service_name,
@@ -62,33 +39,6 @@ bool ServiceRegistry::Register(const std::string& service_name,
   return true;
 }
 
-bool ServiceRegistry::IsConnected() const {
-  return this->is_connected_ && this->zk_handle_ != nullptr;
-}
-
-void ServiceRegistry::GlobalWatcher(zhandle_t* zk_handle, int type, int state,
-                                    const char* path, void* watcher_ctx) {
-  if (watcher_ctx == nullptr) {
-    return;
-  }
-  ServiceRegistry* registry = static_cast<ServiceRegistry*>(watcher_ctx);
-  if (type == ZOO_SESSION_EVENT) {
-    if (state == ZOO_CONNECTED_STATE) {
-      registry->is_connected_ = true;
-      LOG_INFO("zookeeper connected");
-    } else if (state == ZOO_EXPIRED_SESSION_STATE) {
-      registry->is_connected_ = false;
-      LOG_ERROR("zookeeper session expired");
-    } else if (state == ZOO_AUTH_FAILED_STATE) {
-      registry->is_connected_ = false;
-      LOG_ERROR("zookeeper auth failed");
-    } else {
-      registry->is_connected_ = false;
-      LOG_WARN("zookeeper unknown state {}", state);
-    }
-  }
-}
-
 bool ServiceRegistry::EnSurePath(const std::string& path) {
   if (path.empty()) {
     LOG_ERROR("EnSurePath path is empty");
@@ -107,12 +57,12 @@ bool ServiceRegistry::EnSurePath(const std::string& path) {
     };
   };
   struct Stat stat;
-  int ret = zoo_exists(zk_handle_, path.c_str(), 0, &stat);
+  int ret = zoo_exists(zk_handle_.get(), path.c_str(), 0, &stat);
   if (ret == ZOK) {
     LOG_DEBUG("EnSurePath {} exists", path);
     return true;
   } else if (ret == ZNONODE) {
-    ret = zoo_create(this->zk_handle_, path.c_str(), "", 0,
+    ret = zoo_create(this->zk_handle_.get(), path.c_str(), "", 0,
                      &ZOO_OPEN_ACL_UNSAFE, 0, nullptr, 0);
     if (ret == ZOK) {
       LOG_INFO("EnSurePath {} success", path);
@@ -136,7 +86,7 @@ bool ServiceRegistry::CreateNode(const std::string& path,
     LOG_ERROR("CreateNode zk_handle_ is nullptr");
     return false;
   };
-  int ret = zoo_create(this->zk_handle_, path.c_str(), value.c_str(),
+  int ret = zoo_create(this->zk_handle_.get(), path.c_str(), value.c_str(),
                        value.size(), &ZOO_OPEN_ACL_UNSAFE, flags, nullptr, 0);
   if (ret == ZOK) {
     LOG_INFO("CreateNode {} success", path);
@@ -149,3 +99,5 @@ bool ServiceRegistry::CreateNode(const std::string& path,
     return false;
   }
 }
+
+}  // namespace rpc

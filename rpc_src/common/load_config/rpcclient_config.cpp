@@ -17,8 +17,8 @@ bool rpc::RpcClientConfig::Init(const std::string& config_path) {
     config_file.close();
     this->SetRetryTimes(config.value("retry_times", 3));
     this->SetTimeoutMs(config.value("timeout_ms", 1000));
-    this->SetServerPort(config.value("server_port", 8989));
     this->SetClientIp(config.value("client_ip", "127.0.0.1"));
+    this->SetLoadBalance(config.value("load_balance", "random"));
     std::string master_key = config.value("master_key", "rpc_mt_aes_encrypt_key");
     rpc::AesEncrypt::GetInstance().Init(master_key);
     return true;
