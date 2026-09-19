@@ -15,22 +15,24 @@ class RpcClientConfig {
   bool Init(const std::string& config_path);
   int GetTimeoutMs() const { return timeout_ms; }
   int GetRetryTimes() const { return retry_times; }
-  int GetServerPort() const { return server_port; }
   std::string GetClientip() const { return client_ip; }
+  std::string GetLoadBalance() const { return load_balance; }
 
  private:
   void SetTimeoutMs(int timeout_ms) { this->timeout_ms = timeout_ms; }
   void SetRetryTimes(int retry_times) { this->retry_times = retry_times; }
-  void SetServerPort(int server_port) { this->server_port = server_port; }
   void SetClientIp(const std::string& client_ip) {
     this->client_ip = client_ip;
+  }
+  void SetLoadBalance(const std::string& load_balance) {
+    this->load_balance = load_balance;
   }
   RpcClientConfig() = default;
 
  private:
-  int timeout_ms;
-  int retry_times;
-  int server_port;
+  int timeout_ms = 1000;
+  int retry_times = 3;
   std::string client_ip;
+  std::string load_balance = "random";
 };
 }  // namespace rpc

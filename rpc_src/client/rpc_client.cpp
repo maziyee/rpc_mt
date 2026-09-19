@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
+#include "load_balance.h"
 #include "rpcclient_config.h"
 #include "zk_config.h"
 #include "zk_handler.h"
@@ -99,6 +100,14 @@ bool rpc::RpcClient::InitConfig(const std::string& config_path,
   this->retry_times_ = config.GetRetryTimes();
   this->time_out_ms_ = config.GetTimeoutMs();
   this->client_ip_ = config.GetClientip();
+
+  // 按配置选择负载均衡策略；未配置或配置非法时 InitLoadBanlance 内部会退回 random
+  const std::string& balance_type = config.GetLoadBalance();
+  if (!LoadBanlance::InitLoadBanlance(balance_type)) {
+    LOG_WARN("InitLoadBanlance failed for type '{}', fallback to random",
+             balance_type);
+  }
+
   ZkConfig zk;
   zk.InitZkConfig(zk_config_path);
   if (!ZkHandler::GetInstance().InitZkHandler(&zk)) {
