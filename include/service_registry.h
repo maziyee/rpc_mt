@@ -2,29 +2,30 @@
 
 #include <zookeeper/zookeeper.h>
 
-#include <memory>
 #include <string>
-#include <vector>
 
 #include "log_manager.h"
+#include "zk_handle.h"
 
+namespace rpc {
+
+// 只负责「往 ZK 写」：注册服务实例（临时节点）与建父路径。
+// 连接不由自己建立 —— 借用 ZkHandler 已经建好的那条，双方共享同一 session。
 class ServiceRegistry {
  public:
-  ServiceRegistry(const std::string& zk_hosts);
-  ~ServiceRegistry();
+  explicit ServiceRegistry(ZkHandle zk_handle);
 
   bool Register(const std::string& service_name,
                 const std::string& service_addr);
   bool IsConnected() const;
 
  private:
-  static void GlobalWatcher(zhandle_t* zk_handle, int type, int state,
-                            const char* path, void* watcher_ctx);
   bool EnSurePath(const std::string& path);
   bool CreateNode(const std::string& path, const std::string& value, int flags);
 
  private:
-  zhandle_t* zk_handle_;
+  ZkHandle zk_handle_;
   static const std::string ROOT_PATH;
-  bool is_connected_;
 };
+
+}  // namespace rpc

@@ -28,22 +28,13 @@ void rpc::ZkHandler::CleanUp() {
     return;
   }
   is_clean_up.store(true);
-  this->service_registry_.reset();
 
-  if (this->zk_client) {
-    try {
-      zookeeper_close(this->zk_client);
-      zk_client = nullptr;
-    } catch (const std::exception& e) {
-      LOG_ERROR("zookeeper_close failed: {}", e.what());
-      zk_client = nullptr;
-      return;
-    } catch (...) {
-      LOG_ERROR("zookeeper_close failed: unknown error");
-      zk_client = nullptr;
-      return;
-    }
-  }
+  // 先放掉借用者，再放掉 handle。用 shared_ptr 之后这两行的顺序其实无所谓
+  // （最后一个引用归零才真正 close），保持"借用者先走"只是为了读起来顺。
+  this->service_registry_.reset();
+  // deleter 里调 zookeeper_close，引用计数归零时自动触发
+  this->zk_client.reset();
+
   this->is_running_.store(false);
 }
 
@@ -69,14 +60,14 @@ void rpc::ZkHandler::GlobalWatcher(zhandle_t* zh, int type, int state,
 }
 
 bool rpc::ZkHandler::CreateRegistry() {
+  // ServiceRegistry 现在借用 zk_client，所以必须先连上再创建它
+  if (this->zk_client == nullptr) {
+    LOG_ERROR("CreateRegistry failed: zk_client is null, call InitZkHandler first");
+    return false;
+  }
   try {
-    auto zk_connect = this->zk_host_ + ":" + std::to_string(this->zk_port_);
-    this->service_registry_ = std::make_unique<ServiceRegistry>(zk_connect);
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    if (!this->service_registry_->IsConnected()) {
-      LOG_ERROR("CreateRegistry failed: not connected");
-      return false;
-    }
+    // 不再新建连接、不再 sleep —— handle 已经连好了，直接共享
+    this->service_registry_ = std::make_unique<ServiceRegistry>(this->zk_client);
     return true;
   } catch (const std::exception& e) {
     LOG_ERROR("CreateRegistry failed: {}", e.what());
@@ -84,7 +75,7 @@ bool rpc::ZkHandler::CreateRegistry() {
   }
 }
 
-ServiceRegistry* rpc::ZkHandler::GetServiceRegistry() {
+rpc::ServiceRegistry* rpc::ZkHandler::GetServiceRegistry() {
   if (this->service_registry_ == nullptr) {
     std::lock_guard<std::mutex> lock(this->mutex_);
     if (this->service_registry_ == nullptr) {
@@ -147,8 +138,8 @@ std::vector<std::string> rpc::ZkHandler::GetServers() {
   try {
     struct String_vector nodes = {0};
 
-    int rc = zoo_get_children(this->zk_client, this->zk_namespace_.c_str(), 0,
-                              &nodes);
+    int rc = zoo_get_children(this->zk_client.get(),
+                              this->zk_namespace_.c_str(), 0, &nodes);
     if (rc != ZOK) {
       LOG_ERROR("zoo_get_children failed: {}", rc);
       return {};
@@ -159,7 +150,7 @@ std::vector<std::string> rpc::ZkHandler::GetServers() {
       LOG_INFO("zoo_get_children node: {}", node_path);
       char data[1024];
       int data_len = sizeof(data);
-      rc = zoo_get(this->zk_client, node_path.c_str(), 0, data, &data_len,
+      rc = zoo_get(this->zk_client.get(), node_path.c_str(), 0, data, &data_len,
                    nullptr);
       if (rc == ZOK && data_len > 0) {
         std::string server(data, data_len);
@@ -260,8 +251,8 @@ bool rpc::ZkHandler::EnSureConnect() {
     try {
       std::string conn_string =
           this->zk_host_ + ":" + std::to_string(this->zk_port_);
-      this->zk_client = zookeeper_init(conn_string.c_str(), this->GlobalWatcher,
-                                       30000, nullptr, this, 0);
+      this->zk_client =
+          MakeZkHandle(conn_string, this->GlobalWatcher, this, 30000);
       if (!this->zk_client) {
         LOG_ERROR("zk_handler init failed");
         return false;
@@ -276,7 +267,7 @@ bool rpc::ZkHandler::EnSureConnect() {
   }
   int retry = 0;
   while (retry < kMaxRetryTimes) {
-    int state = zoo_state(this->zk_client);
+    int state = zoo_state(this->zk_client.get());
     const char* err_msg = nullptr;
     if (state == ZOO_CONNECTED_STATE) {
       err_msg = "ZOO_CONNECTED_STATE";
@@ -300,7 +291,7 @@ bool rpc::ZkHandler::EnSureConnect() {
       LOG_WARN("Unknown state: {}", state);
       if (this->zk_client) {
         struct Stat stat = {0};
-        int rc = zoo_exists(zk_client, "/", 0, &stat);
+        int rc = zoo_exists(zk_client.get(), "/", 0, &stat);
         LOG_WARN("zoo_exists rc: {}", rc);
       }
     }
