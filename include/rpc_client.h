@@ -109,13 +109,16 @@ inline bool RpcClient::ProcessResponse(Response& response,
     LOG_ERROR("ReadWithTimeout error");
     return false;
   }
-  auto data = this->conn_->GetReadBuf();
-  if (data.empty()) {
-    LOG_ERROR("data is empty");
+  // 从读缓冲里提取【一条】完整帧（半包时 ConsumeFrame 返回 false）。
+  // 用 ConsumeFrame 而不是 GetReadBuf()：后者返回拷贝、不消费缓冲，
+  // 会让 recv_buf_ 无限累积 —— 这正是"第二次 Call 读到上次残留"的原因。
+  std::string cipher;
+  if (!this->conn_->ConsumeFrame(cipher)) {
+    LOG_ERROR("no complete frame in read buffer");
     return false;
   }
   std::string decrypt_data;
-  if (!AesEncrypt::GetInstance().Decrypt(data, decrypt_data)) {
+  if (!AesEncrypt::GetInstance().Decrypt(cipher, decrypt_data)) {
     LOG_ERROR("Decrypt error");
     return false;
   }

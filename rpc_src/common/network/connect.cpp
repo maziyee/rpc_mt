@@ -9,6 +9,7 @@
 
 #include "aes_encrypt.h"
 #include "connect_manage.h"
+#include "frame_codec.h"
 #include "log_manager.h"
 #include "service_manager.h"
 #include "socket.h"
@@ -84,8 +85,10 @@ bool rpc::Connect::Write(RpcResponse& response) {
     LOG_ERROR("SendRes error in Encrypt");
     return false;
   }
+  // 加上明文分帧头：[magic][frame_len][密文]
+  const std::string frame = rpc::EncodeFrame(encrypt);
   std::lock_guard<std::mutex> lock(write_mutex_);
-  this->send_buf_.insert(send_buf_.end(), encrypt.begin(), encrypt.end());
+  this->send_buf_.insert(send_buf_.end(), frame.begin(), frame.end());
   LOG_INFO("sent info to the buf");
   return this->SentBufInfo();
 }
@@ -107,8 +110,10 @@ bool rpc::Connect::Write(RpcRequest& request) {
     LOG_ERROR("SendReq error in Encrypt");
     return false;
   }
+  // 加上明文分帧头：[magic][frame_len][密文]
+  const std::string frame = rpc::EncodeFrame(encrypt);
   std::lock_guard<std::mutex> lock(write_mutex_);
-  this->send_buf_.insert(send_buf_.end(), encrypt.begin(), encrypt.end());
+  this->send_buf_.insert(send_buf_.end(), frame.begin(), frame.end());
   LOG_INFO("sent info to the buf");
   return this->SentBufInfo();
 }
@@ -154,23 +159,38 @@ bool rpc::Connect::SentBufInfo() {
   return true;
 }
 
+bool rpc::Connect::ConsumeFrame(std::string& cipher) {
+  return rpc::TryDecodeFrame(this->recv_buf_, cipher) == rpc::FrameResult::kOk;
+}
+
 bool rpc::Connect::ProgressGetMessage() {
-  if (this->recv_buf_.size() >= sizeof(RpcHeader)) {
-    LOG_INFO("the recv buf size: {}", this->recv_buf_.size());
+  // 循环把缓冲里【所有】完整帧都处理掉 —— 粘包（多条消息合在一次 recv 里）
+  // 由此自然解决，HandleData 不需要知道这件事。
+  while (true) {
+    std::string cipher;
+    const rpc::FrameResult state = rpc::TryDecodeFrame(this->recv_buf_, cipher);
+
+    if (state == rpc::FrameResult::kNeedMore) {
+      // 半包：数据还没到齐，安静等待下一次可读。
+      // 这【不是错误】—— 老实现走到这里会因为解密/解压失败而直接关连接。
+      return true;
+    }
+    if (state == rpc::FrameResult::kInvalid) {
+      LOG_ERROR("invalid frame header, recv buf size: {}",
+                this->recv_buf_.size());
+      return false;
+    }
+
+    // 至此 cipher 是一条完整密文，且已从 recv_buf_ 中消费掉
+    LOG_INFO("the frame size: {}", cipher.size());
     try {
-      std::string encrypt_string(this->recv_buf_.begin(),
-                                 this->recv_buf_.end());
       std::string decrypt_string;
-      if (encrypt_string.empty()) {
-        LOG_ERROR("the encrypt_string is empty");
-        return false;
-      }
-      if (!rpc::AesEncrypt::GetInstance().Decrypt(encrypt_string,
-                                                  decrypt_string)) {
+      if (!rpc::AesEncrypt::GetInstance().Decrypt(cipher, decrypt_string)) {
         LOG_ERROR("Decrypt error");
         return false;
       }
       LOG_INFO("the decrypt_string size: {}", decrypt_string.size());
+
       std::string decompress_data;
       if (!rpc::ZstdCompress::GetInstance().DecompressString(decrypt_string,
                                                              decompress_data)) {
@@ -178,9 +198,10 @@ bool rpc::Connect::ProgressGetMessage() {
         return false;
       }
       LOG_INFO("the decompress_data size: {}", decompress_data.size());
+
       if (decompress_data.size() < sizeof(RpcHeader)) {
-        LOG_DEBUG("waiting for more data");
-        return true;
+        LOG_ERROR("decompressed data is smaller than RpcHeader");
+        return false;
       }
       RpcHeader header;
       std::memcpy(&header, decompress_data.data(), sizeof(RpcHeader));
@@ -188,12 +209,16 @@ bool rpc::Connect::ProgressGetMessage() {
         LOG_ERROR("the magic is not match");
         return false;
       }
-      uint32_t total_size = header.body_size_ + sizeof(RpcHeader);
-      if (decompress_data.size() < total_size) {
-        LOG_DEBUG("waiting for more data");
-        return true;
+
+      // 内层长度自洽校验：有了外层分帧，解出来的【就应该恰好】是一条明文帧。
+      // 对不上说明内部数据损坏，不是"还没读完"，所以这里报错而不是等待。
+      const uint32_t total_size = header.body_size_ + sizeof(RpcHeader);
+      if (decompress_data.size() != total_size) {
+        LOG_ERROR("plaintext frame size mismatch: got {}, expect {}",
+                  decompress_data.size(), total_size);
+        return false;
       }
-      LOG_INFO("the total_size: {}", total_size);
+
       RpcRequest request;
       if (!request.Deserializer(decompress_data)) {
         LOG_ERROR("Deserializer error");
@@ -203,15 +228,13 @@ bool rpc::Connect::ProgressGetMessage() {
       if (this->message_callback_) {
         message_callback_(shared_from_this(), request);
       }
-      this->recv_buf_.clear();
-      LOG_INFO("the request info process success");
-      return true;
+      // 不再 clear()！TryDecodeFrame 已经消费掉这一条，剩下的字节留在
+      // recv_buf_ 里，下一轮循环继续提取 —— 这正是粘包被解决的地方。
     } catch (std::exception& e) {
       LOG_ERROR("ProgressGetMessage error: {}", e.what());
       return false;
     }
   }
-  return true;
 }
 
 bool rpc::Connect::ReadWithTimeout(int timeout_ms) {

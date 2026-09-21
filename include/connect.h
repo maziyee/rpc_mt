@@ -33,12 +33,12 @@ class Connect : public std::enable_shared_from_this<Connect> {
   std::string GetIp() const { return this->ip_; };
   int GetPort() const { return this->port_; };
   bool IsRunning() const { return this->is_running_.load() && this->fd_ > 0; };
+  // 从读缓冲里提取【一条】完整密文，消费掉已用的字节。
+  // 返回 false 表示"还没凑够一条"（半包）——调用方应等下次可读，而不是当错误。
+  bool ConsumeFrame(std::string& cipher);
   bool ProgressGetMessage();
   bool ReadWithTimeout(int timeout_ms);
-  std::string GetReadBuf() {
-    auto res = std::string(this->recv_buf_.begin(), this->recv_buf_.end());
-    return res;
-  }
+  std::string GetReadBuf() { return this->recv_buf_; }
 
  private:
   bool SentBufInfo();
@@ -48,7 +48,7 @@ class Connect : public std::enable_shared_from_this<Connect> {
   int fd_;
   std::string ip_;
   int port_;
-  std::vector<char> recv_buf_;
+  std::string recv_buf_;
   std::vector<char> send_buf_;
   const int kMaxBufSize = 1024 * 1024;
   std::atomic<bool> is_running_;

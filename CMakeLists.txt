@@ -44,13 +44,18 @@ set (SERVER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/server/server_main.cpp"
 )
 
-set (TEST_SOURCES 
+set (TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_service.cpp"
+)
+
+# 客户端核心（不含 main），供 client 与测试目标共用
+set(CLIENT_CORE_SOURCES
+"${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/client/rpc_client.cpp"
 )
 
 set(CLIENT_SOURCES
 "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/client/client_main.cpp"
-"${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/client/rpc_client.cpp"
+${CLIENT_CORE_SOURCES}
 )
 
 add_executable(server
@@ -63,8 +68,16 @@ add_executable(client
     ${CLIENT_SOURCES}
 )
 
+# 分帧端到端测试（连续多调用 + 大请求触发半包）
+# 需要 ZK 与 server 已启动：./scripts/zk_server.sh daemon && ./build/server
+add_executable(framing_test
+    ${COMMON_SOURCES}
+    ${CLIENT_CORE_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_framing_client.cpp"
+)
 
-foreach(target server client)
+
+foreach(target server client framing_test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/protobuf
