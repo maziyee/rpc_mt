@@ -80,8 +80,8 @@ echo "          期望：改动前 ≈ 1.0s（CreateRegistry 里的 sleep_for(1s
 echo
 echo "【指标 4】功能回归（client 端到端调用）"
 if timeout 20 "$BUILD/client" > /tmp/zktest/zk_conn_client.log 2>&1; then
-  if grep -q "RPC success" /tmp/zktest/zk_conn_client.log; then
-    echo "          ✅ $(grep -o 'RPC success.*' /tmp/zktest/zk_conn_client.log)"
+  if grep -aq "RPC success" /tmp/zktest/zk_conn_client.log; then
+    echo "          ✅ $(grep -ao 'RPC success.*' /tmp/zktest/zk_conn_client.log)"
   else
     echo "          ❌ client 退出码 0 但没有 RPC success"
   fi
