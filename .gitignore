@@ -17,3 +17,8 @@ rpc_src/common/load_config/rpc.code-workspace
 ARCH_DECOUPLING.md
 PLAN.md
 ZK_NOTES.md
+MYSQL_POOL_HANDOFF.md
+
+# 含凭据的配置：密码只留在本地
+config/mysql_config.json
+config/redis_config.json
