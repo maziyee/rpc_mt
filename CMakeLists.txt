@@ -27,6 +27,12 @@ find_package(unofficial-zookeeper CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 
+# OpenSSL 只用来做 PBKDF2（password_hash）。
+# 链接时用 ${OPENSSL_CRYPTO_LIBRARY} 而不是 OpenSSL::Crypto —— 理由同下面的
+# MYSQLCLIENT：imported target 会带着 INTERFACE_INCLUDE_DIRECTORIES 把编译
+# 参数传播出去，可能让已有的 .o 全部作废、整棵树重编。
+find_package(OpenSSL REQUIRED)
+
 # MySQL 客户端库：系统装的 libmysqlclient-dev，用 pkg-config 取库路径。
 # ⚠️ 不要用 IMPORTED_TARGET / PkgConfig::MYSQLCLIENT —— 那会把 pkg-config 的
 #    编译参数一起传播出去（-isystem /usr/include/mysql），四个目标的编译命令
@@ -48,6 +54,7 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/rpc_protobuf/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/network/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/mysql/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/security/*.cpp"
     )
 
 set (SERVER_SOURCES 
@@ -92,6 +99,18 @@ add_executable(mysql_test
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_mysql.cpp"
 )
 
+# 密码哈希测试。刻意【不进】下面的 foreach，也不带 ${COMMON_SOURCES} ——
+# 它只依赖 OpenSSL，不碰 protobuf/spdlog/zookeeper/mysql。
+# 独立配置让它的编译和链接都快得多，也让"这一层零依赖"这件事在构建里可见。
+add_executable(password_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_password.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/security/password_hash.cpp"
+)
+target_include_directories(password_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(password_test PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
+
 
 foreach(target server client framing_test mysql_test)
     target_include_directories(${target} PRIVATE
@@ -106,6 +125,10 @@ foreach(target server client framing_test mysql_test)
         unofficial::zookeeper::zookeeper
         $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
         ${MYSQLCLIENT_LINK_LIBRARIES}
+        # security/password_hash.cpp 在 COMMON_SOURCES 里，所以这四个目标
+        # 都编了它、也都得链 libcrypto。漏了就是链接期 undefined reference
+        # to EVP_sha256 —— 编译能过，错在最后一步。
+        ${OPENSSL_CRYPTO_LIBRARY}
     )
 
     target_compile_options(${target} PRIVATE
