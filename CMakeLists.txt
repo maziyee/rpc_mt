@@ -57,8 +57,15 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/security/*.cpp"
     )
 
-set (SERVER_SOURCES 
+# 服务端业务服务（不含 main），供 server 与 auth_test 共用。
+# 与 CLIENT_CORE_SOURCES 是同一个模式。
+set(SERVER_CORE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/server/auth_service.cpp"
+)
+
+set (SERVER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/server/server_main.cpp"
+    ${SERVER_CORE_SOURCES}
 )
 
 set (TEST_SOURCES
@@ -99,6 +106,13 @@ add_executable(mysql_test
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_mysql.cpp"
 )
 
+# AuthService 注册/登录测试（同样需要本机 MySQL）
+add_executable(auth_test
+    ${COMMON_SOURCES}
+    ${SERVER_CORE_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_auth.cpp"
+)
+
 # 密码哈希测试。刻意【不进】下面的 foreach，也不带 ${COMMON_SOURCES} ——
 # 它只依赖 OpenSSL，不碰 protobuf/spdlog/zookeeper/mysql。
 # 独立配置让它的编译和链接都快得多，也让"这一层零依赖"这件事在构建里可见。
@@ -112,7 +126,7 @@ target_include_directories(password_test PRIVATE
 target_link_libraries(password_test PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 
 
-foreach(target server client framing_test mysql_test)
+foreach(target server client framing_test mysql_test auth_test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/protobuf
