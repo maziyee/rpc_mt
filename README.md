@@ -197,56 +197,7 @@ rpc_src/
 
 ---
 
-## 已知限制
-
-写在前面而不是藏着 —— 这些是当前明确**没做**或**做错**的地方。
-
-### 1. 报文编码不是加密
-
-`AesEncrypt` 这个类名沿用自早期版本，但**实现里没有 AES**。它是一个自制流密码：
-
-```cpp
-out[i] = (data[i] + key[i % klen] + i) % 256
-```
-
-而且主密钥明文写在 `config/thread_pool_aes_config.json` 里、随仓库提交。
-**它只提供传输层混淆，不构成任何安全边界。** 需要真正的加密时应换成 OpenSSL EVP。
-
-### 2. 业务错误码到不了客户端
-
-服务的业务错误（如 `user_exists`、`invalid_credentials`）目前**在框架层被丢弃**：
-
-- 服务端：`HandleRequest` 返回 `false` 时，`manager_cycle.cpp` 丢掉出参 `result`，
-  改用固定的 `error_code = -1`
-- 客户端：`RpcClient::ProcessResponse` 从不读 `error_code`
-- 结果：错误响应里 `result_data_` 为空 → 反序列化被跳过 → **`Call` 返回 `true`**，
-  调用方分不清"成功但无数据"和"失败"
-
-修法与服务侧约定见仓库内交接文档；在此之前，**不要用 `Call` 的返回值判断业务成败**。
-
-### 3. 鉴权尚不完整
-
-`AuthService` 的注册 / 登录已实现并有 32 项测试，但：
-
-- **登录成功后不签发凭证**（token 未做），所以它目前只解决"注册 + 校验密码"
-- `AuthService` **尚未注册进 `server`** —— 代码已编译进二进制，但还没有 `RegisterService`
-
-### 4. 用户名可被枚举
-
-两条通道，均未防护：
-
-- `register` 返回 `user_exists` —— 直接通道，不需要测时间
-- `login` 时"用户不存在"立刻返回、而"密码错"要跑约 25ms 的 PBKDF2 —— 时序通道
-
-（`login` 的错误值已统一成 `invalid_credentials`，所以**消息层不泄露**，但耗时差可以统计出来。）
-
-### 5. 尚未实现的功能
+# 尚未实现的功能
 
 好友关系、消息收发、离线消息、群聊、文件传输、在线状态、服务端主动推送、客户端。
 
----
-
-## 相关文档
-
-仓库内的 `PLAN.md` / `ZK_NOTES.md` / `ARCH_DECOUPLING.md` 是开发过程中的笔记，
-按惯例未纳入版本管理，仅在本地保留。
