@@ -1,5 +1,7 @@
 #include "password_hash.h"
 
+#include "hex.h"
+
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -17,50 +19,8 @@ constexpr size_t kSaltHexLen = kSaltBytes * 2;  // 32
 constexpr size_t kKeyHexLen = kKeyBytes * 2;    // 64
 
 constexpr char kAlgorithm[] = "pbkdf2_sha256";
-constexpr char kHexDigits[] = "0123456789abcdef";
 
-bool IsLowerHex(const std::string& s, size_t expect_len) {
-  if (s.size() != expect_len) {
-    return false;
-  }
-  for (const char c : s) {
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-std::string ToHex(const unsigned char* data, size_t len) {
-  std::string out;
-  out.reserve(len * 2);
-  for (size_t i = 0; i < len; ++i) {
-    out.push_back(kHexDigits[data[i] >> 4]);
-    out.push_back(kHexDigits[data[i] & 0x0F]);
-  }
-  return out;
-}
-
-bool FromHex(const std::string& hex, unsigned char* out) {
-  const auto nibble = [](char c) -> int {
-    if (c >= '0' && c <= '9') {
-      return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-      return c - 'a' + 10;
-    }
-    return -1;
-  };
-  for (size_t i = 0; i < hex.size(); i += 2) {
-    const int hi = nibble(hex[i]);
-    const int lo = nibble(hex[i + 1]);
-    if (hi < 0 || lo < 0) {
-      return false;
-    }
-    out[i / 2] = static_cast<unsigned char>((hi << 4) | lo);
-  }
-  return true;
-}
+// hex 编解码在 hex.h —— token_store 也要用，放一处避免两份副本漂移。
 
 bool Derive(const std::string& password, const unsigned char* salt,
             size_t salt_len, int iterations, unsigned char* out,
