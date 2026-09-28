@@ -45,9 +45,22 @@ std::shared_ptr<rpc::Connect> rpc::ConnectManage::GetConnect(int fd) {
 }
 
 void rpc::ConnectManage::CloseAll() {
-  for (auto& it : this->m_connects) {
-    it.second->Close();
+  // ⚠️ 不能直接遍历 m_connects。Close() 会触发 close_callback_，那条链一路
+  //    走到 RemoveConnect() —— 也就是【一边遍历一边删正在遍历的 map】，
+  //    迭代器失效。而且原来这里压根没加锁，别的线程 AddConnect 同样能搞坏它。
+  //
+  // 先 swap 到局部变量（O(1)，只换指针、不拷贝元素），m_connects 变成空的。
+  // 之后回调里的 RemoveConnect 操作的是那个已经空的 map，是无害的 no-op；
+  // 而遍历的是私有容器，别的线程碰不到。
+  //
+  // 同一个手法在 MysqlClient::Close() 里也有（那里是为了到锁外去关连接）。
+  std::unordered_map<int, std::shared_ptr<Connect>> conns;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    conns.swap(this->m_connects);
   }
-  LOG_INFO("ConnectManage::ClossAll");
-  this->m_connects.clear();
+  for (auto& kv : conns) {
+    kv.second->Close();
+  }
+  LOG_INFO("ConnectManage::CloseAll: {} connections closed", conns.size());
 }

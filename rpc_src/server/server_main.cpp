@@ -20,11 +20,21 @@ static std::shared_ptr<rpc::Socket> g_socket_server = nullptr;
 
 static std::atomic<int> g_received_signal{0};
 
+// ⚠️ 信号处理函数里【只能】做 async-signal-safe 的事。
+//
+// 这里只做两件：存两个 atomic，加上调 RequestStop()（那也只是存一个 atomic）。
+//
+// 原来这里直接调的是 Stop()，那是错的：Stop() 要拿 ConnectManage::mutex_ 和
+// spdlog 的锁、还要遍历 unordered_map。信号一旦打断正持有同一把锁的线程，
+// handler 就会在锁上等【它自己】—— std::mutex 不可重入 → 永久死锁。而且死在
+// 信号处理函数里，Ctrl+C 也救不回来（SIGINT 走另一个 handler，但循环已经不转了）。
+//
+// 置标志本身是安全的；真正的清理回 main 线程做（GreacefulShutdown 和析构）。
 void SignHandle(int sig) {
   g_received_signal.store(sig, std::memory_order_relaxed);
   g_shutdown_requested = true;
   if (g_manager_cycle) {
-    g_manager_cycle->Stop();
+    g_manager_cycle->RequestStop();
   }
 }
 
@@ -53,7 +63,20 @@ void GreacefulShutdown() {
   } catch (std::exception& e) {
     LOG_ERROR("ShutDown error: {}", e.what());
   }
-  spdlog::shutdown();
+
+  // ⚠️ 这里【不能】调 spdlog::shutdown()。
+  //
+  // 调用它之后，spdlog::default_logger() 变成 nullptr，任何 LOG_* 都会在
+  // should_log() 里空指针解引用、直接段错误。而关闭流程结束不等于对象都析构
+  // 完了 —— main 里的局部对象（ManagerCycle 等）是 main 返回时才析构的，
+  // 比这里还晚，而 ~ManagerCycle / ~Connect / ~ConnectManage 里都有 LOG_*。
+  //
+  // 症状就是服务正常跑、正常响应，一收到 SIGTERM 就 139 (SIGSEGV)，
+  // 而且崩在析构路径上、看起来像"退出时本来就乱"。
+  //
+  // 不显式关闭没有代价：logger 设了 flush_on(trace)，每条日志都已经落盘，
+  // 剩下的资源由 spdlog 自己的静态析构收尾 —— 那个时机在最后，比所有
+  // 会打日志的对象都晚。
 }
 
 int main() {
@@ -137,7 +160,26 @@ int main() {
       return -1;
     }
     g_manager_cycle = manager_cycle.get();
+
+    // ⚠️ 信号可能在上面那行【之前】就到达。那时 SignHandle 里的
+    //    `if (g_manager_cycle)` 还是 null，只能设 g_shutdown_requested，
+    //    调不到 Stop() —— 而 Stop() 才是把 is_stop_ 置真的那个。
+    //    结果就是 Loop() 永远跑下去，进程对 SIGTERM 完全免疫。
+    //
+    //    在赋值和进循环之间补一次检查，把这个窗口关掉。
+    //    （赋值【之后】来的信号是安全的：SignHandle 会调 Stop()，is_stop_
+    //      已经是 true，Loop() 立刻返回。）
+    if (g_shutdown_requested.load()) {
+      LOG_INFO("shutdown requested before loop started, skipping loop");
+      manager_cycle->Stop();
+    }
     manager_cycle->Loop();
+
+    // ⚠️ Loop 返回后必须立刻断开这个【裸指针】。
+    //    从这一刻起到 main 结束之间，manager_cycle 这个 shared_ptr 随时可能
+    //    析构；而 SignHandle 里是 `if (g_manager_cycle) g_manager_cycle->...`——
+    //    不断开的话，之后到达的任何信号都会调到一个已释放的对象上。
+    g_manager_cycle = nullptr;
 
     g_shutdown_requested = true;
     GreacefulShutdown();

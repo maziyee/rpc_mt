@@ -21,9 +21,19 @@ class ManagerCycle {
   ~ManagerCycle();
   void Loop();
   void Stop();
+  // 只把停止标志置真，不做任何别的事 —— 所以它可以在【信号处理函数】里调。
+  //
+  // 和 Stop() 的区别是关键的：Stop() 要拿 ConnectManage::mutex_ 和 spdlog 的
+  // 锁、还要遍历容器。信号处理函数里做这些，一旦打断了正持有同一把锁的线程
+  // 就是永久自死锁（std::mutex 不可重入），而且死在 handler 里连 Ctrl+C 都
+  // 救不回来。真正置标志是 async-signal-safe 的；清理必须回主线程做。
+  void RequestStop();
   void HandleEvent(int fd, uint32_t events);
   void HandleNewConnection(Socket* socket);
   void HandleData(int fd);
+  // 把某条连接 send_buf_ 里的残留字节再推一次（EPOLLOUT 事件驱动）。
+  // 公开是为了能单独测——推送路径上没有"下一次 Write"来兜底，这里是唯一出口。
+  void HandleWrite(int fd);
   void RemoveConnect(int fd);
   void HandleMessage(const std::shared_ptr<Connect>& connect,
                      const rpc::RpcRequest& request);

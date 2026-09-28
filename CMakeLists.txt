@@ -100,6 +100,15 @@ add_executable(framing_test
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_framing_client.cpp"
 )
 
+# 网络层 5 个修复的测试。
+# ①②③⑤ 零外部依赖（自己造回环 TCP）；④ 需要 ZK 起着且 server 未启动。
+# 需要 CLIENT_CORE_SOURCES 是因为 ④ 要用 RpcClient。
+add_executable(network_test
+    ${COMMON_SOURCES}
+    ${CLIENT_CORE_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_network_fixes.cpp"
+)
+
 # MySQL 连接池测试（需要本机 MySQL 已启动，连接信息见 config/mysql_config.json）
 add_executable(mysql_test
     ${COMMON_SOURCES}
@@ -126,7 +135,7 @@ target_include_directories(password_test PRIVATE
 target_link_libraries(password_test PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 
 
-foreach(target server client framing_test mysql_test auth_test)
+foreach(target server client framing_test mysql_test auth_test network_test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/protobuf

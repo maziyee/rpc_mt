@@ -33,6 +33,8 @@ void rpc::ManagerCycle::Loop() {
   this->is_running_ = false;
 }
 
+void rpc::ManagerCycle::RequestStop() { is_stop_ = true; }
+
 void rpc::ManagerCycle::Stop() {
   this->is_running_ = false;
   is_stop_ = true;
@@ -43,9 +45,14 @@ void rpc::ManagerCycle::Stop() {
 }
 
 void rpc::ManagerCycle::HandleEvent(int fd, uint32_t events) {
-  if (events & (EPOLLHUP | EPOLLERR)) {
-    LOG_ERROR("HandleEvent error: {}", fd);
-    this->Remove(fd);
+  // EPOLLRDHUP 也列在这里：Add() 一直注册着它，但从没有人检查过 ——
+  // 对端半关闭时只有它报，靠 recv()==0 兜底并不总是成立。
+  if (events & (EPOLLHUP | EPOLLERR | EPOLLRDHUP)) {
+    LOG_ERROR("HandleEvent error: fd={} events={:#x}", fd, events);
+    // ⚠️ 走 RemoveConnect，不是 Remove。Remove 只把 fd 从 epoll 摘掉，
+    //    连接对象会留在 ConnectManage 里、fd 也不关 —— 慢慢泄漏。
+    //    RemoveConnect 是两者都做（对照它的定义）。
+    this->RemoveConnect(fd);
     return;
   }
   if (listen_fds_.find(fd) != listen_fds_.end()) {
@@ -57,6 +64,31 @@ void rpc::ManagerCycle::HandleEvent(int fd, uint32_t events) {
       LOG_INFO("HandleEvent read fd: {}", fd);
       this->HandleData(fd);
     }
+    // Add() 注册了 EPOLLOUT，但这里原来没有对应分支 —— 事件被直接丢弃。
+    //
+    // ET 模式下 EPOLLOUT 只在"发送缓冲由满转不满"时报【一次】，而那正是重发
+    // 残留字节的唯一时机。不处理它，SentBufInfo 里因 EAGAIN 留下的那截数据
+    // 就永远发不出去：客户端表现为"卡住不报错"，服务端日志一片安静。
+    // 响应路径还能靠"下一次 Write 顺带重发"糊过去，推送没有下一次。
+    if (events & EPOLLOUT) {
+      this->HandleWrite(fd);
+    }
+  }
+}
+
+void rpc::ManagerCycle::HandleWrite(int fd) {
+  auto conn = this->connect_manage_->GetConnect(fd);
+  if (!conn || !conn->IsRunning()) {
+    return;  // 可能刚被 HandleData 摘掉，静默返回
+  }
+  // 绝大多数 EPOLLOUT 都在这一行返回：无锁读一个 atomic，不必为了确认
+  // "没东西要发"去抢 write_mutex_。
+  if (!conn->HasPendingSend()) {
+    return;
+  }
+  if (!conn->FlushSendBuf()) {
+    LOG_ERROR("HandleWrite flush failed, fd={}", fd);
+    this->RemoveConnect(fd);
   }
 }
 

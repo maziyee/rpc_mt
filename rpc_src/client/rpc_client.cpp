@@ -19,19 +19,27 @@ rpc::RpcClient::~RpcClient() { DisConnect(); }
 
 rpc::RpcClient::RpcClient(const std::string config_path,
                           const std::string zk_config_path) {
-  try {
-    if (!InitConfig(config_path, zk_config_path)) {
-      throw std::runtime_error("InitConfig error");
-    };
-    if (!this->InitSocket(this->socket_fd_)) {
-      throw std::runtime_error("InitSocket error");
-    }
-    if (!this->Connect()) {
-      throw std::runtime_error("Connect error");
-    }
-  } catch (const std::exception& e) {
-    LOG_ERROR("RpcClient init error: {}", e.what());
-    throw;
+  // 配置错 = 调用方没准备好，属于编程/部署错误 → 抛
+  if (!InitConfig(config_path, zk_config_path)) {
+    LOG_ERROR("RpcClient: init config failed");
+    throw std::runtime_error("InitConfig error");
+  }
+  // socket() 都建不出来，属于资源问题 → 也抛
+  if (!this->InitSocket(this->socket_fd_)) {
+    LOG_ERROR("RpcClient: init socket failed");
+    throw std::runtime_error("InitSocket error");
+  }
+
+  // ⚠️ Connect 失败【不抛】。
+  //
+  // "服务端还没起来"是个正常状态，不是编程错误。而且 Call() 里本来就有
+  // `if (!is_connected_) return false;` 专门处理这条路 —— 构造函数抛异常
+  // 等于绕过了它，强迫每个调用方包 try/catch。
+  //
+  // 连不上时客户端就停在"未连接"状态，调用方用 IsConnect() 判断，
+  // 或者直接 Call() 拿 false。
+  if (!this->Connect()) {
+    LOG_WARN("RpcClient: not connected (server down?), IsConnect() is false");
   }
 }
 
@@ -72,6 +80,17 @@ bool rpc::RpcClient::Connect() {
     }
     this->conn_ = std::make_shared<rpc::Connect>(fd);
     break;
+  }
+
+  // ⚠️ 原来这里无条件 is_connected_ = true 并返回 true。重试全部失败时
+  //    conn_ 仍然是空的，但标志位宣称"已连接" —— 下一次 Call 会通过
+  //    is_connected_ 检查，然后在 SendRequest 里 this->conn_->Write(...)
+  //    空指针解引用，直接段错误。
+  //
+  //    触发场景很平常：服务端没起来时跑客户端。
+  if (!this->conn_) {
+    LOG_ERROR("Connect failed: retried {} times", this->retry_times_);
+    return false;
   }
   this->is_connected_ = true;
   return true;

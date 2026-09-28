@@ -134,29 +134,50 @@ void rpc::Connect::Close() {
   }
 }
 
+// 前置条件：调用方已经持有 write_mutex_（Write 和 FlushSendBuf 都先加锁）。
 bool rpc::Connect::SentBufInfo() {
   if (this->send_buf_.empty()) {
-    LOG_INFO("the send buf is empty");
+    this->has_pending_.store(false);
     return true;
   }
+
   int total_send = 0;
-  while (total_send < static_cast<int>(this->send_buf_.size())) {
-    int send_size = ::send(this->fd_, this->send_buf_.data() + total_send,
-                           this->send_buf_.size() - total_send, 0);
+  const int total = static_cast<int>(this->send_buf_.size());
+  while (total_send < total) {
+    // MSG_NOSIGNAL：对端已经关闭时，让 send 返回 EPIPE，而不是给进程发 SIGPIPE。
+    //
+    // 全项目没有任何地方 signal(SIGPIPE, SIG_IGN)，而 SIGPIPE 的默认动作是
+    // 【终止进程】—— 也就是说一条连接出问题会让整个服务下线。响应路径上窗口
+    // 很小（只在客户端断开的那一瞬间恰好有响应要发），但推送是服务端主动写，
+    // 那条路上一炸就是全员掉线。
+    const ssize_t send_size =
+        ::send(this->fd_, this->send_buf_.data() + total_send,
+               total - total_send, MSG_NOSIGNAL);
     if (send_size < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // 不是错误：内核发送缓冲满了。剩余的留在 send_buf_ 里，
+        // 等 EPOLLOUT 事件来驱动重试。
         break;
       }
       LOG_ERROR("send error: {}", strerror(errno));
       return false;
-    } else if (send_size == 0) {
+    }
+    if (send_size == 0) {
       LOG_WARN("send 0 bytes, peer closed, fd: {}", this->fd_);
       return false;
     }
-    total_send += send_size;
+    total_send += static_cast<int>(send_size);
   }
+
   this->send_buf_.erase(send_buf_.begin(), send_buf_.begin() + total_send);
+  // 告诉事件循环"还有残留，下次可写时再来叫我"
+  this->has_pending_.store(!this->send_buf_.empty());
   return true;
+}
+
+bool rpc::Connect::FlushSendBuf() {
+  std::lock_guard<std::mutex> lock(this->write_mutex_);
+  return this->SentBufInfo();
 }
 
 bool rpc::Connect::ConsumeFrame(std::string& cipher) {
