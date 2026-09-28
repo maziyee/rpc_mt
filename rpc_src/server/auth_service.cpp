@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "log_manager.h"
+#include "memory_token_store.h"
 #include "mysql_client.h"
 #include "password_hash.h"
+#include "token_store.h"
 
 namespace rpc {
 namespace {
@@ -54,26 +56,53 @@ bool IsValidPassword(const std::string& s) {
   return s.size() >= kPasswordMinLen && s.size() <= kPasswordMaxLen;
 }
 
-// 解析出 username / password。失败时填好 result 并返回 false。
-// 两个方法共用，省得把这段 JSON 处理抄两遍。
-bool ParseCredentials(const std::string& args, std::string& username,
-                      std::string& password, std::string& result) {
-  nlohmann::json in;
+// 把 args 解析成一个 JSON 对象。失败时填好 result 并返回 false。
+bool ParseObject(const std::string& args, nlohmann::json& out,
+                 std::string& result) {
   try {
-    in = nlohmann::json::parse(args);
+    out = nlohmann::json::parse(args);
   } catch (const std::exception& e) {
     LOG_WARN("AuthService: args is not valid json: {}", e.what());
     result = ErrorResult("invalid_args");
     return false;
   }
-  if (!in.is_object() || !in.contains("username") || !in.contains("password") ||
-      !in["username"].is_string() || !in["password"].is_string()) {
+  if (!out.is_object()) {
     result = ErrorResult("invalid_args");
     return false;
   }
-  username = in["username"].get<std::string>();
-  password = in["password"].get<std::string>();
   return true;
+}
+
+// 从一个 JSON 对象里取字符串字段。缺字段或类型不对都算 invalid_args。
+bool GetString(const nlohmann::json& in, const char* key, std::string& out,
+               std::string& result) {
+  if (!in.contains(key) || !in[key].is_string()) {
+    result = ErrorResult("invalid_args");
+    return false;
+  }
+  out = in[key].get<std::string>();
+  return true;
+}
+
+// 解析出 username / password。
+bool ParseCredentials(const std::string& args, std::string& username,
+                      std::string& password, std::string& result) {
+  nlohmann::json in;
+  if (!ParseObject(args, in, result)) {
+    return false;
+  }
+  return GetString(in, "username", username, result) &&
+         GetString(in, "password", password, result);
+}
+
+// 解析出 token。
+bool ParseToken(const std::string& args, std::string& token,
+                std::string& result) {
+  nlohmann::json in;
+  if (!ParseObject(args, in, result)) {
+    return false;
+  }
+  return GetString(in, "token", token, result);
 }
 
 }  // namespace
@@ -91,6 +120,14 @@ bool ParseCredentials(const std::string& args, std::string& username,
 // 只给 ② 打补丁（查不到用户时也跑一次 dummy Verify）收益有限，因为 ① 更容易
 // 用。等做限流时一起处理 —— 限流本来就该同时覆盖 register 和 login。
 
+AuthService::AuthService()
+    : owned_store_(std::make_unique<token::MemoryStore>()),
+      store_(owned_store_.get()) {}
+
+AuthService::AuthService(token::Store& store) : store_(&store) {}
+
+AuthService::~AuthService() = default;
+
 bool AuthService::HandleRequest(const std::string& method_name,
                                 const std::string& args, std::string& result) {
   if (method_name == "register") {
@@ -98,6 +135,12 @@ bool AuthService::HandleRequest(const std::string& method_name,
   }
   if (method_name == "login") {
     return this->Login(args, result);
+  }
+  if (method_name == "verify") {
+    return this->Verify(args, result);
+  }
+  if (method_name == "logout") {
+    return this->Logout(args, result);
   }
   LOG_ERROR("AuthService: unknown method '{}'", method_name);
   result = ErrorResult("unknown_method");
@@ -203,10 +246,67 @@ bool AuthService::Login(const std::string& args, std::string& result) {
     return false;
   }
 
+  // 密码对了 —— 签发 token。
+  const std::string token_str = this->store_->Issue(uid, token::kDefaultTtlSec);
+  if (token_str.empty()) {
+    // ⚠️ 签发失败必须当【登录失败】处理。返回一个空 token 说"登录成功"，
+    //    用户下一步必然 401，而且从响应里看不出原因。
+    LOG_ERROR("AuthService::login: token issue failed, uid={}", uid);
+    result = ErrorResult("server_error");
+    return false;
+  }
+
   nlohmann::json out;
   out["uid"] = uid;
   out["username"] = username;
+  out["token"] = token_str;
+  out["expires_in"] = token::kDefaultTtlSec;
   result = out.dump();
+  return true;
+}
+
+bool AuthService::Verify(const std::string& args, std::string& result) {
+  std::string token_str;
+  if (!ParseToken(args, token_str, result)) {
+    return false;
+  }
+
+  std::string uid;
+  const token::Verdict v = this->store_->Verify(token_str, uid);
+
+  if (v == token::Verdict::kUnavailable) {
+    // 后端挂了。这条【必须】和"token 无效"分开：回 401 会让用户以为"重新
+    // 登录就行"，但重登也登不上（后端本身不可用），而且运维那边没有告警。
+    // 进程内实现走不到这个分支，换 Redis 之后才会。
+    LOG_ERROR("AuthService::verify: token backend unavailable");
+    result = ErrorResult("server_error");
+    return false;
+  }
+  if (v != token::Verdict::kValid) {
+    result = ErrorResult("invalid_token");
+    return false;
+  }
+
+  // 只回 uid，不查库 —— verify 在每个请求上都调，不能带一次 MySQL 往返。
+  // 需要 username 的地方（显示"我是谁"之类）单独查，那是低频操作。
+  nlohmann::json out;
+  out["uid"] = uid;
+  result = out.dump();
+  return true;
+}
+
+bool AuthService::Logout(const std::string& args, std::string& result) {
+  std::string token_str;
+  if (!ParseToken(args, token_str, result)) {
+    return false;
+  }
+  // 幂等：撤一个不存在或已过期的 token 不算错误 —— 重复登出是正常操作。
+  //
+  // ⚠️ Revoke 返回 void，所以后端不可用时这里【看不出来】：客户端以为登出
+  //    成功了，而 token 其实还有效（直到 TTL 到期）。进程内实现没有这个问题；
+  //    换 Redis 后如果要严格，得让 Revoke 也返回三态。
+  this->store_->Revoke(token_str);
+  result = nlohmann::json::object().dump();
   return true;
 }
 

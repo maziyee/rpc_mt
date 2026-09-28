@@ -15,18 +15,22 @@
 // 覆盖：注册成功 / 重名 / 弱密码 / 非法用户名 / 登录成功 / 密码错 /
 //       用户不存在 / 库里存的是哈希而非明文 / 非法 JSON / 未知方法 / 清理
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "auth_service.h"
 #include "log_manager.h"
+#include "memory_token_store.h"
 #include "mysql_client.h"
 #include "mysql_config.h"
 #include "spdlog_config.h"
+#include "token_store.h"
 
 namespace {
 
@@ -81,6 +85,25 @@ std::string Creds(const std::string& user, const std::string& pass) {
   j["password"] = pass;
   return j.dump();
 }
+
+std::string TokenArg(const std::string& token) {
+  nlohmann::json j;
+  j["token"] = token;
+  return j.dump();
+}
+
+// 一个永远说"后端不可用"的实现。
+//
+// 用它才有办法覆盖 AuthService 里那条 Verdict::kUnavailable 分支 ——
+// MemoryStore 永远走不到那里，不注入它，那个分支就是一段没有测试的死代码。
+class AlwaysDownStore : public rpc::token::Store {
+ public:
+  std::string Issue(const std::string&, int) override { return ""; }
+  rpc::token::Verdict Verify(const std::string&, std::string&) override {
+    return rpc::token::Verdict::kUnavailable;
+  }
+  void Revoke(const std::string&) override {}
+};
 
 }  // namespace
 
@@ -227,8 +250,102 @@ int main() {
             "unknown_method",
         "未知方法 → unknown_method（与业务错误可区分）");
 
-  // ── 11) 清理 ──
-  std::cout << "[11] 清理测试数据" << std::endl;
+  // ── 11) login 签发 token ──
+  std::cout << "[11] login 签发 token" << std::endl;
+  const Reply login_a = Invoke(auth, "login", Creds(user_a, good_pw));
+  Check(login_a.error.empty(), "登录成功");
+  const std::string tok_a = login_a.body.value("token", "");
+  Check(!tok_a.empty(), "返回了 token");
+  Check(tok_a.size() == 64,
+        "token 是 64 个 hex 字符（实际 " + std::to_string(tok_a.size()) + "）");
+  Check(login_a.body.value("expires_in", 0) == rpc::token::kDefaultTtlSec,
+        "expires_in 是默认 TTL");
+  // 多端登录：同一账号再登一次，应该拿到【不同】的 token
+  const Reply login_c = Invoke(auth, "login", Creds(user_a, good_pw));
+  const std::string tok_b = login_c.body.value("token", "");
+  Check(!tok_b.empty() && tok_b != tok_a,
+        "两次登录拿到不同的 token（支持多端）");
+
+  // ── 12) verify ──
+  std::cout << "[12] verify" << std::endl;
+  const Reply v_a = Invoke(auth, "verify", TokenArg(tok_a));
+  Check(v_a.error.empty(), "有效 token → 无 error");
+  Check(v_a.body.value("uid", "") == uid_a, "拿回正确的 uid");
+  Check(!v_a.body.contains("username"),
+        "只回 uid、不回 username（verify 不查库）");
+
+  Check(Err(auth, "verify", TokenArg(std::string(64, '0'))) == "invalid_token",
+        "格式合法但没签发过的 token → invalid_token");
+  Check(Err(auth, "verify", TokenArg("")) == "invalid_token",
+        "空 token → invalid_token");
+  Check(Err(auth, "verify", R"({})") == "invalid_args",
+        "缺 token 字段 → invalid_args");
+  Check(Err(auth, "verify", "不是 JSON") == "invalid_args",
+        "args 不是 JSON → invalid_args");
+
+  // ── 13) logout ──
+  std::cout << "[13] logout" << std::endl;
+  Check(Err(auth, "logout", TokenArg(tok_a)).empty(), "logout 成功（无 error）");
+  Check(Err(auth, "verify", TokenArg(tok_a)) == "invalid_token",
+        "登出后该 token 失效");
+  // 多端登录的意义就在这里：撤一个不影响另一个
+  Check(Err(auth, "verify", TokenArg(tok_b)).empty(),
+        "另一个 token 不受影响（多端各撤各的）");
+  Check(Err(auth, "logout", TokenArg(tok_a)).empty(),
+        "重复 logout 不报错（幂等）");
+
+  // ── 14) token 后端不可用 ──
+  // 测的是 AuthService 里那条 kUnavailable 分支 —— 内存实现永远走不到，
+  // 只有注入假实现才覆盖得到。
+  std::cout << "[14] token 后端不可用（注入假实现）" << std::endl;
+  {
+    AlwaysDownStore down;
+    rpc::AuthService down_auth(down);
+
+    Check(Err(down_auth, "verify", TokenArg("whatever")) == "server_error",
+          "后端不可用 → server_error（【不是】invalid_token）");
+    Check(Err(down_auth, "login", Creds(user_a, good_pw)) == "server_error",
+          "签发失败时 login 也失败（不能回空 token 说成功）");
+  }
+
+  // ── 15) MemoryStore 的过期与清理 ──
+  // 绕过 AuthService 直接测存储 —— AuthService 用的是 1 小时的 TTL，
+  // 从外面测不到过期行为。
+  std::cout << "[15] MemoryStore 的过期与清理" << std::endl;
+  {
+    rpc::token::MemoryStore store;
+    std::string uid_out;
+
+    const std::string t1 = store.Issue("u1", 1);  // 1 秒后过期
+    Check(!t1.empty() && t1.size() == 64, "Issue 返回 64 个 hex 字符");
+    Check(store.Size() == 1, "Size() == 1");
+    Check(store.Verify(t1, uid_out) == rpc::token::Verdict::kValid,
+          "刚签发就校验 → kValid");
+    Check(uid_out == "u1", "拿回正确的 uid");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+
+    Check(store.Verify(t1, uid_out) == rpc::token::Verdict::kInvalid,
+          "1.1 秒后 → kInvalid（已过期）");
+    Check(store.Size() == 1,
+          "过期条目【还在】map 里（Verify 不做全表清理，只限频清）");
+
+    const std::string t2 = store.Issue("u2", 60);
+    Check(store.Size() == 1,
+          "Issue 顺手清掉了过期的 t1（现在只剩 t2）");
+
+    store.Revoke(t2);
+    Check(store.Verify(t2, uid_out) == rpc::token::Verdict::kInvalid,
+          "Revoke 后 → kInvalid");
+    store.Revoke(t2);
+    Check(true, "重复 Revoke 不崩（幂等）");
+
+    Check(store.Issue("", 60).empty(), "空 uid → Issue 返回空串");
+    Check(store.Issue("u3", 0).empty(), "ttl=0 → Issue 返回空串");
+  }
+
+  // ── 16) 清理 ──
+  std::cout << "[16] 清理测试数据" << std::endl;
   const int del = db.ExecuteParams("DELETE FROM users WHERE username LIKE ?",
                                    {std::string(kPrefix) + "%"});
   Check(del >= 1, "删除测试用户（影响 " + std::to_string(del) + " 行）");
