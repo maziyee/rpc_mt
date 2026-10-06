@@ -100,7 +100,7 @@ void rpc::ManagerCycle::HandleNewConnection(Socket* socket) {
   }
   LOG_INFO("HandleNewConnection success: {}", fd);
   std::shared_ptr<Connect> connect = std::make_shared<Connect>(fd);
-  connect->SetMessageCallback(
+  connect->SetRequestCallback(
       [this](const std::shared_ptr<Connect>& conn, const RpcRequest& request) {
         this->HandleMessage(conn, request);
       });

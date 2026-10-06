@@ -8,11 +8,12 @@ bool rpc::RpcRequest::Serializer(std::string& out) {
   try {
     size_t body_size = this->method_name_.size() + this->service_name_.size() +
                        this->payload_.size() + 3 * sizeof(uint32_t);
-    RpcHeader header;
+    RpcHeader header{};
     out.resize(body_size + sizeof(RpcHeader));
     header.body_size_ = body_size;
     header.magic_ = RpcHeader::kMagic;
     header.sequence_id_ = this->GetSequenceId();
+    header.type_ = kRpcTypeRequest;
     std::memcpy(&out[0], &header, sizeof(RpcHeader));
     size_t pos = sizeof(RpcHeader);
 
@@ -51,10 +52,18 @@ bool RpcRequest::Deserializer(const std::string& in) {
       LOG_ERROR("RpcRequest::Deserializer error: input size is too small");
       return false;
     }
-    RpcHeader header;
+    RpcHeader header{};
     std::memcpy(&header, in.data(), sizeof(RpcHeader));
     if (header.magic_ != RpcHeader::kMagic) {
       LOG_ERROR("RpcRequest::Deserializer error: magic number is not valid");
+      return false;
+    }
+    // 类型不对就【明确报错】，不要硬按 request 解析下去 —— 那样解出来的是
+    // 乱码而不是错误，最终症状是"服务端收到一个不存在的服务名"之类查不出
+    // 根因的现象。
+    if (header.type_ != kRpcTypeRequest) {
+      LOG_ERROR("RpcRequest::Deserializer error: not a request frame, type: {}",
+                static_cast<int>(header.type_));
       return false;
     }
     size_t pos = sizeof(RpcHeader);
@@ -123,11 +132,12 @@ bool RpcResponse::Serializer(std::string& out) {
     size_t body_size = this->error_message_.size() + this->result_data_.size() +
                        2 * sizeof(uint32_t) + sizeof(this->error_code_) +
                        sizeof(this->GetSequenceId());
-    RpcHeader header;
+    RpcHeader header{};
     out.resize(body_size + sizeof(RpcHeader));
     header.body_size_ = body_size;
     header.magic_ = RpcHeader::kMagic;
     header.sequence_id_ = this->GetSequenceId();
+    header.type_ = kRpcTypeResponse;
     std::memcpy(&out[0], &header, sizeof(RpcHeader));
     size_t pos = sizeof(RpcHeader);
 
@@ -165,10 +175,15 @@ bool RpcResponse::Deserializer(const std::string& in) {
       LOG_ERROR("RpcResponse::Deserializer error: input size is too small");
       return false;
     }
-    RpcHeader header;
+    RpcHeader header{};
     std::memcpy(&header, in.data(), sizeof(RpcHeader));
     if (header.magic_ != RpcHeader::kMagic) {
       LOG_ERROR("RpcResponse::Deserializer error: magic number is not valid");
+      return false;
+    }
+    if (header.type_ != kRpcTypeResponse) {
+      LOG_ERROR("RpcResponse::Deserializer error: not a response frame, type: {}",
+                static_cast<int>(header.type_));
       return false;
     }
     size_t pos = sizeof(RpcHeader);

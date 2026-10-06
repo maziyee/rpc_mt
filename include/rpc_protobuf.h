@@ -8,10 +8,24 @@
 
 namespace rpc {
 
+// 帧类型。放【内层】RpcHeader（密文里），不放外层帧头 —— 外层
+// [magic][frame_len] 是明文，类型放那儿等于让对端随便标。
+constexpr uint8_t kRpcTypeRequest = 0;
+constexpr uint8_t kRpcTypeResponse = 1;
+
 struct RpcHeader {
   uint32_t magic_;
   uint32_t body_size_;
   uint32_t sequence_id_;
+  // 见上面两个常量。
+  //
+  // 没有它就无法分辨一条帧是 RpcRequest 还是 RpcResponse：两者的 body 布局
+  // 不同，按错的类型解析【不会报错】，只会解出乱码。
+  //
+  // 3 个 uint32_t + 这个 uint8_t = 13 字节，sizeof 是 16（3 字节 padding）。
+  // 两边都用 sizeof(RpcHeader) 裸 memcpy 所以一致，但 padding 是未初始化的
+  // 栈内容、会被一起发上线 —— 构造时一律写 `RpcHeader header{};`。
+  uint8_t type_;
 
   static const uint32_t kMagic;
 };

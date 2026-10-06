@@ -14,8 +14,15 @@ class RpcRequest;
 class RpcResponse;
 class Connect : public std::enable_shared_from_this<Connect> {
  public:
-  using Message_Callback =
+  using Request_Callback =
       std::function<void(const std::shared_ptr<Connect> &, RpcRequest &)>;
+  // 收到 RpcResponse 时的回调，和 Request_Callback 对称。
+  //
+  // 为什么不能复用 Request_Callback：一条帧是 request 还是 response，由密文
+  // 里的 RpcHeader::type_ 决定；两者的 body 布局不同、反序列化出的对象类型
+  // 也不同。推送连接上两个方向混走，所以必须分开。
+  using Response_Callback =
+      std::function<void(const std::shared_ptr<Connect> &, RpcResponse &)>;
   using Close_Callback = std::function<void(const std::shared_ptr<Connect> &)>;
   explicit Connect(int fd);
   ~Connect();
@@ -39,8 +46,11 @@ class Connect : public std::enable_shared_from_this<Connect> {
   // 留给下一次 EPOLLOUT。
   bool FlushSendBuf();
 
-  void SetMessageCallback(Message_Callback cb) {
-    this->message_callback_ = cb;
+  void SetRequestCallback(Request_Callback cb) {
+    this->request_callback_ = cb;
+  };
+  void SetResponseCallback(Response_Callback cb) {
+    this->response_callback_ = cb;
   };
   void SetCloseCallback(Close_Callback cb) { this->close_callback_ = cb; };
 
@@ -70,7 +80,8 @@ class Connect : public std::enable_shared_from_this<Connect> {
   // send_buf_ 有没有残留。用 atomic 而不是裸 bool：HandleWrite 要无锁地
   // 先问一句"这条连接有东西没发完吗"，绝大多数时候答案是没有，不该为此加锁。
   std::atomic<bool> has_pending_{false};
-  Message_Callback message_callback_;
+  Request_Callback request_callback_;
+  Response_Callback response_callback_;
   Close_Callback close_callback_;
   std::mutex write_mutex_;
 };

@@ -224,6 +224,8 @@ bool rpc::Connect::ProgressGetMessage() {
         LOG_ERROR("decompressed data is smaller than RpcHeader");
         return false;
       }
+      // 这里【不用】写 RpcHeader header{}：memcpy 覆盖整个 sizeof(RpcHeader)，
+      // 包括 padding —— 只有 Serializer 的写路径才需要 {} 去清 padding。
       RpcHeader header;
       std::memcpy(&header, decompress_data.data(), sizeof(RpcHeader));
       if (header.magic_ != RpcHeader::kMagic) {
@@ -240,14 +242,44 @@ bool rpc::Connect::ProgressGetMessage() {
         return false;
       }
 
-      RpcRequest request;
-      if (!request.Deserializer(decompress_data)) {
-        LOG_ERROR("Deserializer error");
+      // 按 type_ 分派。两种帧的 body 布局不同，必须用对应的类型反序列化 ——
+      // 拿 RpcResponse 的字节去喂 RpcRequest::Deserializer，那些长度校验是按
+      // 错的布局算的，运气好报错、运气不好解出乱码。
+      if (header.type_ == kRpcTypeRequest) {
+        RpcRequest request;
+        if (!request.Deserializer(decompress_data)) {
+          LOG_ERROR("Deserializer error");
+          return false;
+        }
+        LOG_INFO("the request get success");
+        if (this->request_callback_) {
+          request_callback_(shared_from_this(), request);
+        } else {
+          // 格式合法但这条连接没注册处理方 —— 是配置问题，不是协议错误。
+          // 只告警、不返回 false：返回 false 会让调用方摘掉整条连接，日志里
+          // 就只剩"连接被关了"，看不出根因。
+          LOG_WARN("request frame dropped: no request callback, fd: {}",
+                   this->fd_);
+        }
+      } else if (header.type_ == kRpcTypeResponse) {
+        RpcResponse response;
+        if (!response.Deserializer(decompress_data)) {
+          LOG_ERROR("Deserializer error");
+          return false;
+        }
+        LOG_INFO("the response get success");
+        if (this->response_callback_) {
+          response_callback_(shared_from_this(), response);
+        } else {
+          LOG_WARN("response frame dropped: no response callback, fd: {}",
+                   this->fd_);
+        }
+      } else {
+        // 到不了这里（两个 Deserializer 各自校验了 type）。留着是为了将来加
+        // 新类型时【必然】在此报错，而不是静默把整条帧丢掉。
+        LOG_ERROR("unknown rpc frame type: {}, fd: {}",
+                  static_cast<int>(header.type_), this->fd_);
         return false;
-      }
-      LOG_INFO("the request get success");
-      if (this->message_callback_) {
-        message_callback_(shared_from_this(), request);
       }
       // 不再 clear()！TryDecodeFrame 已经消费掉这一条，剩下的字节留在
       // recv_buf_ 里，下一轮循环继续提取 —— 这正是粘包被解决的地方。

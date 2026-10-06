@@ -55,6 +55,7 @@ file(GLOB_RECURSE COMMON_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/network/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/mysql/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/security/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/push/*.cpp"
     )
 
 # 服务端业务服务（不含 main），供 server 与 auth_test 共用。
@@ -100,6 +101,7 @@ add_executable(framing_test
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_framing_client.cpp"
 )
 
+
 # 网络层 5 个修复的测试。
 # ①②③⑤ 零外部依赖（自己造回环 TCP）；④ 需要 ZK 起着且 server 未启动。
 # 需要 CLIENT_CORE_SOURCES 是因为 ④ 要用 RpcClient。
@@ -120,6 +122,38 @@ add_executable(auth_test
     ${COMMON_SOURCES}
     ${SERVER_CORE_SOURCES}
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_auth.cpp"
+)
+
+# 协议 type 字段 + Connect 按类型分派。
+#
+# 刻意【只】列这几个 .cpp，不用 ${COMMON_SOURCES}：Connect 那一层实际只用到
+# 协议、分帧、压缩、加密四块，带上 ZK/MySQL/线程池/服务管理是白编一遍。
+# 代价是以后 connect.cpp 新增对别的模块的调用时，这里会链接失败 —— 那是
+# 好事，说明依赖面变了，应该被看见。
+#
+# 不需要 ZK 和 server，所以比 framing_test 快也好跑。
+add_executable(protocol_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/rpc_protobuf/rpc_protobuf.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/network/connect.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/network/frame_codec.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/aes_encrypt/aes_encrypt.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/common/zstd_compress/zstd_compress.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_protocol.cpp"
+)
+target_include_directories(protocol_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protobuf"
+    ${Protobuf_INCLUDE_DIRS}
+)
+target_link_libraries(protocol_test PRIVATE
+    protobuf::libprotobuf
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+)
+target_compile_options(protocol_test PRIVATE
+    -Wno-deprecated-declarations
+    -Wno-unused-parameter
 )
 
 # 密码哈希测试。刻意【不进】下面的 foreach，也不带 ${COMMON_SOURCES} ——
