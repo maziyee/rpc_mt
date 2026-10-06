@@ -9,7 +9,8 @@ bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
                                  const std::string& service_config_path,
                                  const std::string& thread_pool_aes_path,
                                  const std::string& service_socket_config_path,
-                                 const std::string& zk_config_path) {
+                                 const std::string& zk_config_path,
+                                 const std::string& mysql_config_path) {
   try {
     if (!this->spdlog_config_->InitSpdlog(log_config_path)) {
       std::cerr << "InitSpdlog config error" << std::endl;
@@ -36,6 +37,13 @@ bool rpc::RpcConfigManager::Init(const std::string& log_config_path,
     }
     if (!this->zk_config_->InitZkConfig(zk_config_path)) {
       LOG_ERROR("Init zk config error");
+      return false;
+    }
+    // ⚠️ 这里失败即启动失败，但它只管"配置文件读不到 / 键的类型不对"（部署错误）。
+    //    【MySQL 服务器连不上】是另一回事，不在这一步判 —— 那是 MysqlClient::Init
+    //    的职责，它按 30 秒冷却自愈，server 照常起、注册登录暂时返回 server_error。
+    if (!this->mysql_config_->Init(mysql_config_path)) {
+      LOG_ERROR("Init mysql config error");
       return false;
     }
     return true;

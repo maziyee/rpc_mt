@@ -101,6 +101,20 @@ add_executable(framing_test
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_framing_client.cpp"
 )
 
+# AuthService 走【真 RPC】的端到端测试。
+# 需要 MySQL + ZK + server 三样都起着 —— 比 framing_test 多一个 MySQL：
+#   sudo service mysql start && ./scripts/zk_server.sh daemon && ./build/server
+#
+# 它同时是「错误链路」的验收：每个业务错误都断言 Call 返回 false 并且
+# payload 里能读到 {"error":...}。这两个断言对应修复前的两个缺陷
+# （服务端丢 result / 客户端无条件 return true）。
+#
+# 不需要 SERVER_CORE_SOURCES —— 它是客户端，服务端是另一个进程。
+add_executable(auth_rpc_test
+    ${COMMON_SOURCES}
+    ${CLIENT_CORE_SOURCES}
+    "${CMAKE_CURRENT_SOURCE_DIR}/rpc_src/test/test_auth_rpc.cpp"
+)
 
 # 网络层 5 个修复的测试。
 # ①②③⑤ 零外部依赖（自己造回环 TCP）；④ 需要 ZK 起着且 server 未启动。
@@ -169,7 +183,8 @@ target_include_directories(password_test PRIVATE
 target_link_libraries(password_test PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 
 
-foreach(target server client framing_test mysql_test auth_test network_test)
+foreach(target server client framing_test mysql_test auth_test network_test
+        auth_rpc_test)
     target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/protobuf

@@ -5,8 +5,11 @@
 #include <iostream>
 
 #include "aes_encrypt.h"
+#include "auth_service.h"
 #include "log_manager.h"
 #include "manager_cycle.h"
+#include "memory_token_store.h"
+#include "mysql_client.h"
 #include "rpc_config_mananger.h"
 #include "service_registry.h"
 #include "socket.h"
@@ -19,6 +22,15 @@ static rpc::ManagerCycle* g_manager_cycle = nullptr;
 static std::shared_ptr<rpc::Socket> g_socket_server = nullptr;
 
 static std::atomic<int> g_received_signal{0};
+
+// 进程内共享的 token 存储。
+// ⚠️ 必须【只有这一个】—— AuthService 现在用它，将来的 PushService 也要用它
+//    （login 签发的 token 得在 bind 时验得过）。各建一个的话，两边是两个内存
+//    map，症状是"登录成功但 bind 一直失败"。
+// ⚠️ 放文件作用域、不放 main 的局部：ServiceManager 是静态单例，它持有的
+//    AuthService 活到静态析构，比 main 的局部晚 —— 放局部的话 AuthService
+//    会拿着一个已经销毁的 store。
+static std::shared_ptr<rpc::token::MemoryStore> g_token_store;
 
 // ⚠️ 信号处理函数里【只能】做 async-signal-safe 的事。
 //
@@ -101,7 +113,8 @@ int main() {
         (config_dir / "service_config.json").string(),
         (config_dir / "thread_pool_aes_config.json").string(),
         (config_dir / "service_socket_config.json").string(),
-        (config_dir / "zk_config.json").string());
+        (config_dir / "zk_config.json").string(),
+        (config_dir / "mysql_config.json").string());
 
     // 初始化线程池
     if (!meeting_ctrl::ThreadSingle::Init(rpc::RpcConfigManager::GetInstance()
@@ -146,6 +159,27 @@ int main() {
       LOG_ERROR("RegisterService error");
       return -1;
     };
+
+    // ── MySQL + AuthService ──
+    auto* mysql_config = rpc::RpcConfigManager::GetInstance().GetMysqlConfig();
+    LOG_INFO("MySQL: {}", mysql_config->Describe());  // Describe() 会把密码打码
+
+    // ⚠️ Init 即使失败也【必须调】。它在任何失败返回【之前】就把 config_ 存下来了
+    //    （mysql_client.cpp），而 Acquire 靠 `config_ != nullptr` 判断 "Init 调过
+    //    没有" —— 不调的话，那套 30 秒冷却自愈根本不会启动：MySQL 后来起来了，
+    //    注册/登录也永远返回 server_error。
+    if (!rpc::MysqlClient::GetInstance().Init(mysql_config)) {
+      LOG_ERROR(
+          "MysqlClient init failed; auth returns server_error until MySQL "
+          "becomes reachable");
+    }
+
+    g_token_store = std::make_shared<rpc::token::MemoryStore>();
+    auto auth_service = std::make_shared<rpc::AuthService>(*g_token_store);
+    if (!service_manager.RegisterService(auth_service)) {
+      LOG_ERROR("RegisterService AuthService error");
+      return -1;
+    }
 
     auto& zk_handler = rpc::ZkHandler::GetInstance();
     if (!zk_handler.InitZkHandler(
