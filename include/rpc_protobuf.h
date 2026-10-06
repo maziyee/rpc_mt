@@ -13,6 +13,17 @@ namespace rpc {
 constexpr uint8_t kRpcTypeRequest = 0;
 constexpr uint8_t kRpcTypeResponse = 1;
 
+// RpcResponse::error_code_ 的取值。
+//
+// ⚠️ 类型是 uint32_t：SetErrorCode 收无符号，传 -1 进去会存成 4294967295 ——
+//    谁写 `GetErrorCode() == -1` 都永远不成立。（原来 SendErrorRes 就是这么传的。）
+//
+// 分三档而不是"0 / 非 0"：调用方对「服务拒绝了」和「框架没处理」的处理方式不同 ——
+// 前者去读 result_data_ 里的 {"error":...}，后者只能看 error_message。
+constexpr uint32_t kRpcOk = 0;            // 成功
+constexpr uint32_t kRpcErrService = 1;    // 服务拒绝了；result_data_ 通常非空
+constexpr uint32_t kRpcErrFramework = 2;  // 请求没到服务层；result_data_ 可能为空
+
 struct RpcHeader {
   uint32_t magic_;
   uint32_t body_size_;

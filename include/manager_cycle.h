@@ -54,8 +54,12 @@ class ManagerCycle {
   void HandleMessageSync(const std::shared_ptr<Connect>& connect,
                          const rpc::RpcRequest& request);
 
+  // error_code 用 rpc_protobuf.h 里的 kRpcErr* 三个常量。
+  // result 是服务填的 payload：失败时【也要】发出去 —— 业务错误码就在里面
+  // （{"error":"user_exists"}），丢掉它调用方只知道"失败了"，不知道为什么。
   bool SendErrorRes(const std::shared_ptr<Connect>& connect, int sequenceid,
-                    int error_code, std::string error_message);
+                    uint32_t error_code, std::string error_message,
+                    const std::string& result);
   bool SendSuccessRes(const std::shared_ptr<Connect>& connect, int sequenceid,
                       std::string& result);
 

@@ -2,7 +2,7 @@
 //
 //   ./build/framing_test
 //
-// 覆盖三件事：
+// 覆盖五件事：
 //   1) 连续多次调用 —— 验证读缓冲被正确【消费】。
 //      改之前客户端 recv_buf_ 永不清空（Connect::Read 只追加，唯一的
 //      clear() 在服务端路径的 ProgressGetMessage 里），第二次 Call 就会
@@ -10,6 +10,8 @@
 //   2) 大请求 —— 验证半包。请求体用随机十六进制，避免被 zstd 压得太小，
 //      保证密文超过 MSS 从而触发 TCP 分段。
 //   3) 请求/响应内容完整性 —— 大请求的 echo 必须原样返回。
+//   4) 业务错误码能到客户端 —— 服务端的失败信息不再被丢在传输层。
+//   5) 调用不存在的方法 —— 同上，另外守住 service.h 里补的那行 result。
 
 #include <filesystem>
 #include <iostream>
@@ -103,6 +105,42 @@ int main() {
       Check(ok && res.contains("receive message") &&
                 res["receive message"].get<std::string>() == "after-big",
             "大请求之后的小请求仍然正确");
+    }
+
+    // ── 用例 4：业务错误码能到客户端 ─────────────────────
+    //
+    // args 不是 JSON 对象 → HandleEcho 里 catch 到异常
+    //   → result = {"error":"invalid args"}, return false
+    //
+    // 这条路径和 AuthService 的业务错误（user_exists / invalid_credentials）
+    // 【完全一样】，所以不用起 MySQL 就能验证"服务端的失败信息到不到调用方"。
+    //
+    // 修复前两个缺陷叠加，这里必然失败：
+    //   ① SendErrorRes 的签名里没有 result —— 服务填的 {"error":...} 被丢掉
+    //   ② ProcessResponse 结尾无条件 return true —— 空 payload 被当成成功
+    std::cout << "[4] 业务错误码能到客户端" << std::endl;
+    {
+      nlohmann::json args = "not an object";
+      nlohmann::json res;
+      const bool ok = client.Call<nlohmann::json, nlohmann::json>(
+          "RpcService", "echo", rpc::SerializerType::JSON, args, res);
+      Check(!ok, "Call 返回 false（修复前是 true）");
+      Check(res.contains("error"), "出参里拿到了错误 payload（修复前是 null）");
+      if (res.contains("error")) {
+        Check(res["error"] == "invalid args", "业务错误码是 invalid args");
+      }
+    }
+
+    // ── 用例 5：调用不存在的方法 ─────────────────────────
+    std::cout << "[5] 调用不存在的方法" << std::endl;
+    {
+      nlohmann::json args = {{"message", "x"}};
+      nlohmann::json res;
+      const bool ok = client.Call<nlohmann::json, nlohmann::json>(
+          "RpcService", "no_such_method", rpc::SerializerType::JSON, args, res);
+      Check(!ok, "Call 返回 false");
+      Check(res.contains("error") && res["error"] == "unknown_method",
+            "拿到 unknown_method（service.h 里补的那行 result）");
     }
 
   } catch (const std::exception& e) {

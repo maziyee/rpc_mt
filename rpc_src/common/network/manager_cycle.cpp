@@ -232,6 +232,11 @@ void rpc::ManagerCycle::HandleMessageAsync(
   if (!(meeting_ctrl::ThreadSingle::GetInstance().GetState() ==
         meeting_ctrl::ThreadStatus::kRunning)) {
     LOG_ERROR("HandleMessageAsync error: {}", connect->GetFd());
+    // 这条路径原来直接 return —— 一个字节都不回。客户端只能挂在
+    // ReadWithTimeout 上等满超时，最后看到一句 "ReadWithTimeout error"，
+    // 完全不知道服务端的线程池没在跑。
+    this->SendErrorRes(connect, request.GetSequenceId(), kRpcErrFramework,
+                       "thread pool not running", "");
     return;
   }
   LOG_INFO("HandleMessageAsync start");
@@ -241,8 +246,9 @@ void rpc::ManagerCycle::HandleMessageAsync(
       });
   if (!future.valid()) {
     LOG_ERROR("HandleMessageAsync error: {}", connect->GetFd());
-    this->SendErrorRes(connect, request.GetSequenceId(), -1,
-                       "HandleMessageAsync error");
+    // 请求根本没进线程池，服务没机会填 result —— 框架层错误，没有 payload
+    this->SendErrorRes(connect, request.GetSequenceId(), kRpcErrFramework,
+                       "enqueue failed", "");
     return;
   }
 }
@@ -251,8 +257,8 @@ void rpc::ManagerCycle::HandleMessageSync(
     const std::shared_ptr<Connect>& connect, const rpc::RpcRequest& request) {
   if (!request.IsValid()) {
     LOG_ERROR("HandleMessageSync error: {}", connect->GetFd());
-    this->SendErrorRes(connect, request.GetSequenceId(), -1,
-                       "HandleMessageSync error");
+    this->SendErrorRes(connect, request.GetSequenceId(), kRpcErrFramework,
+                       "invalid request", "");
     return;
   }
   std::string result;
@@ -261,20 +267,27 @@ void rpc::ManagerCycle::HandleMessageSync(
       result);
   if (!success) {
     LOG_ERROR("HandleMessageSync error: {}", connect->GetFd());
-    this->SendErrorRes(connect, request.GetSequenceId(), -1,
-                       "HandleMessageSync error");
+    // ⚠️ result 必须传下去。这是这个函数原来最要命的缺陷：服务明明在 result
+    //    里写了 {"error":"user_exists"} 之类的业务错误码（auth_service.cpp 里
+    //    有 13 处），却在这里被丢掉，客户端只收到一句固定的 "HandleMessageSync
+    //    error"。丢掉它，等于让服务的所有业务错误码都白写。
+    this->SendErrorRes(connect, request.GetSequenceId(), kRpcErrService,
+                       "service rejected", result);
     return;
   }
   this->SendSuccessRes(connect, request.GetSequenceId(), result);
 }
 
 bool rpc::ManagerCycle::SendErrorRes(const std::shared_ptr<Connect>& connect,
-                                     int sequenceid, int error_code,
-                                     std::string error_message) {
+                                     int sequenceid, uint32_t error_code,
+                                     std::string error_message,
+                                     const std::string& result) {
   rpc::RpcResponse response;
   response.SetSequenceId(sequenceid);
   response.SetErrorCode(error_code);
   response.SetErrorMessage(error_message);
+  // 失败也带上 payload：kRpcErrService 时里面是服务填的 {"error":...}
+  response.SetResultData(result);
   return this->SendRes(connect, response);
 }
 
@@ -283,7 +296,7 @@ bool rpc::ManagerCycle::SendSuccessRes(const std::shared_ptr<Connect>& connect,
   rpc::RpcResponse response;
   response.SetSequenceId(sequenceid);
   response.SetResultData(result);
-  response.SetErrorCode(0);
+  response.SetErrorCode(kRpcOk);
   response.SetErrorMessage("success");
   return this->SendRes(connect, response);
 }

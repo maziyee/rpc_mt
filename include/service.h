@@ -45,6 +45,9 @@ class UserService : public Service {
       }
     }
     LOG_ERROR("Unknown method name: {}", method_name);
+    // 失败也要填 result —— 框架（ManagerCycle::SendErrorRes）会把它发给客户端。
+    // 不填的话客户端只知道"失败了"，不知道是"方法不存在"还是别的。
+    result = R"({"error":"unknown_method"})";
     return false;
   }
 };
@@ -68,6 +71,7 @@ class RpcService : public Service {
     auto it = handlers_.find(method_name);
     if (it == handlers_.end()) {
       LOG_ERROR("Unknown method name: {}", method_name);
+      result = R"({"error":"unknown_method"})";
       return false;
     }
     LOG_INFO("HandleRequest {}", method_name);

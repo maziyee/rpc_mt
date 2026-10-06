@@ -133,12 +133,25 @@ inline bool RpcClient::ProcessResponse(Response& response,
     LOG_ERROR("Deserializer error");
     return false;
   }
+  // 失败时【也】尝试反序列化 payload：业务错误码就在里面（{"error":"user_exists"}），
+  // 这是调用方唯一能拿到失败原因的地方。所以这一步必须在错误检查【之前】——
+  // Call 返回 false 的时候，出参里已经有数据了。
   if (!rpc_response.GetResultData().empty()) {
     if (!SerializerManager::Deserialize(rpc_response.GetResultData(), response,
                                         serialize_type)) {
       LOG_ERROR("Deserialize error");
       return false;
     }
+  }
+
+  // ⚠️ 这里原来是无条件的 `return true`（缩进骗人：它不在任何 if 里面）。
+  //    后果是服务端明明回了 {"error":"invalid_credentials"}，客户端仍报成功 ——
+  //    调用方会把"密码错误"当成"登录成功"，然后拿着一个空的 token 往下走。
+  //    error_code 的取值见 rpc_protobuf.h。
+  if (rpc_response.GetErrorCode() != rpc::kRpcOk) {
+    LOG_ERROR("rpc call failed: code={}, message={}",
+              rpc_response.GetErrorCode(), rpc_response.GetErrorMessage());
+    return false;
   }
   return true;
 }
